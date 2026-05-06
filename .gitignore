@@ -1,0 +1,12 @@
+checkpoints
+wandb
+output
+__pycache__
+*.log
+*.ckpt
+*.pth
+*.pt
+*.h5
+*.json
+*.csv
+*.zip

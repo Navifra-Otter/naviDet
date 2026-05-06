@@ -1,0 +1,28 @@
+seed: 42
+
+model:
+  model_name: 'custom_dinov3convnext'
+  nkpts: (4, 3)
+  ncls: 7
+  backbone_name: 'dinov3_convnext_small'
+  finetuning: True
+
+trainer:
+  epochs: 100
+  save_path: 'Dinov3ConvNextPose/weights'
+
+dataloader:
+  batch_size: 32
+  num_workers: 8
+  shuffle: True
+
+dataset:
+  img_size: 640
+  dataset: 'yolo_pose'
+  train_dir: '/dev/hdd8/datasets/yolo_data/clear_data/train'
+  valid_dir: '/dev/hdd8/datasets/yolo_data/clear_data/valid'
+
+optimizer:
+  type: 'AdamW'
+  lr: 1e-3
+  weight_decay: 1e-2

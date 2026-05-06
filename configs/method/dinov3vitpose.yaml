@@ -1,0 +1,50 @@
+seed: 42
+
+model:
+  model_name: 'custom_dinov3convnext'
+  nkpts: (4, 3)
+  ncls: 11
+  backbone_name: 'dinov3_convnext_small'
+  finetuning: True
+
+trainer:
+  epochs: 100
+  save_path: 'Dinov3_ViTPose/weights'
+  valid_term: 1
+  early_stopping:
+    enabled: True
+    patience: 10
+    min_delta: 1e-4
+    monitor: 'val_loss'
+  coco_eval:
+    enabled: True
+    num_select: 100
+    score_thresh: 0.0
+    sigmas: []
+
+wandb:
+  enabled: True
+  project: 'pose-estimation'
+  run_name: 'dinov3_vitpose'
+  tags: ['dinov3', 'pose']
+
+dataloader:
+  batch_size: 16
+  num_workers: 8
+  shuffle: True
+  pin_memory: True
+  drop_last: True
+  persistent_workers: True
+  prefetch_factor: 4
+
+dataset:
+  img_size: 640
+  dataset: 'yolo_pose'
+  train_dir: '/media/otter/otterHD/pallet_data/data_yolo/pose/pallet_260310_total/pallet_260310_640/train'
+  valid_dir: '/media/otter/otterHD/pallet_data/data_yolo/pose/pallet_260310_total/pallet_260310_640/valid'
+  cache_ram: False
+
+optimizer:
+  type: 'AdamW'
+  lr: 1e-3
+  weight_decay: 1e-2
