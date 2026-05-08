@@ -1,1 +1,0 @@
-from .coco_keypoint_evaluator import CocoKeypointEvaluator

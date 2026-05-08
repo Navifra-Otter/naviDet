@@ -1,5 +1,5 @@
 import argparse
-from pose.utils import line, printM
+from navidet.utils import line, printM
 
 def parse_args():
     parser = argparse.ArgumentParser(description="codes for ddp")
@@ -21,11 +21,11 @@ def parse_args():
         type=str,
 	)
     parser.add_argument(
-		'--ckpt', 
+		'--ckpt',
 		help='Path to the checkpoint',
         default=None,
 		type=str,
-	)   
+	)
     return parser.parse_known_args()[0]
 
 @line

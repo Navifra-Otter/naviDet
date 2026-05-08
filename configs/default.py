@@ -1,7 +1,12 @@
 from yacs.config import CfgNode as CN
 
-C = CN()
-C.title = "Pose Estimation with DINOv3"
+# new_allowed=True at the root: lets EC-style YAML blocks
+# (train_dataloader, ema, scaler, evaluator, etc.) merge in without having to
+# pre-declare every key. The YacsYAMLConfig adapter (navidet/core/registry/
+# yacs_config.py) routes those into yaml_cfg for the EdgeCrafter solver.
+C = CN(new_allowed=True)
+C.title = "naviDet"
+# Task — one of: 'pose', 'detection', 'segmentation'
 C.task = 'pose'
 C.seed = 42
 C.use_deterministic = True
@@ -11,11 +16,27 @@ C.model = CN()
 C.model.model_name = 'custom_dinov3convnext'
 C.model.nkpts = (4, 3)
 C.model.ncls = 7
+# Backbone selector — 'ec*' prefix routes to ecvit (own KD-style backbone),
+# 'dinov3*' / 'custom_dinov3*' prefix routes to legacy dinov3 (ablation).
 C.model.backbone_name = 'dinov3_convnext_base'
 C.model.backbone_ckps = None
 C.model.finetuning = True
 
-C.dataset = CN()
+# `method` is a free-form node populated by configs/method/<task>/<variant>.yaml.
+# The Builder feeds this dict through EdgeCrafter's registry (`create()`) to
+# instantiate ECPose / ECDet / ECSeg with their backbone+encoder+decoder.
+C.method = CN(new_allowed=True)
+
+# Knowledge distillation — when enabled, teacher is built via
+# Builder.teacher_model() and used inside engine/{det,pose}_trainer.py.
+C.kd = CN()
+C.kd.enabled = False
+C.kd.teacher_backbone = 'dinov3_convnext_base'
+C.kd.teacher_ckpt = None
+C.kd.feat_loss_weight = 1.0
+C.kd.logit_loss_weight = 0.0
+
+C.dataset = CN(new_allowed=True)
 C.dataset.img_size = 512
 C.dataset.dataset = 'yolo_pose'
 C.dataset.train_dir = 'data/train'
@@ -56,13 +77,9 @@ C.wandb.run_name = ''
 C.wandb.tags = []
 
 
-C.lr_scheduler = CN()
-C.lr_scheduler.type = 'cosine'
-C.lr_scheduler.warmup_epochs = 5
-C.lr_scheduler.min_lr = 1e-6
-
-C.optimizer = CN()
-C.optimizer.type = 'adamw'
-C.optimizer.lr = 1e-4
-C.optimizer.weight_decay = 1e-2
+# lr_scheduler / optimizer are populated entirely from YAML. The minimal
+# Builder path uses getattr() with sensible fallbacks for missing keys, so we
+# don't pre-declare any specific fields here.
+C.lr_scheduler = CN(new_allowed=True)
+C.optimizer = CN(new_allowed=True)
 
