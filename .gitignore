@@ -1,6 +1,6 @@
 checkpoints
 wandb
-output
+outputs
 __pycache__
 *.log
 *.ckpt

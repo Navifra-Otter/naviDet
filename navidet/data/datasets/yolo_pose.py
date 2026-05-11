@@ -159,6 +159,8 @@ class YoloPoseDataset(Dataset):
                 "keypoints": torch.zeros((0, self.nkpts, 3), dtype=torch.float32),
                 "area": torch.zeros((0,), dtype=torch.float32),
                 "iscrowd": torch.zeros((0,), dtype=torch.int64),
+                "orig_size": torch.tensor([w, h], dtype=torch.int64),
+                "size": torch.tensor([w, h], dtype=torch.int64),
             }
 
         cls = torch.from_numpy(flat[:, 1]).long()
@@ -188,17 +190,42 @@ class YoloPoseDataset(Dataset):
             "keypoints": kpts,
             "area": area,
             "iscrowd": torch.zeros((n,), dtype=torch.int64),
+            # EC convention: (w, h) order — DETRPosePostProcessor scales
+            # predicted keypoints with these as multipliers along (x, y).
+            "orig_size": torch.tensor([w, h], dtype=torch.int64),
+            "size": torch.tensor([w, h], dtype=torch.int64),
         }
 
     # ----------------------------------------------------------- load_item
     def load_item(self, idx):
         """Pre-transforms (PIL, target_dict) — needed by CocoEvaluator's
         `get_coco_api_from_dataset` to scan ground truths once at startup.
+
+        Keypoints stay in 3D `(N, K, 3)` (interleaved x,y,v) here because
+        EC's transforms (Resize / Mosaic / RandomZoomOut / …) operate on this
+        layout. The flat `(N, 3K)` xyxyvv conversion happens AFTER transforms
+        in __getitem__ for the model's consumption.
         """
         img_path = self.img_files[idx]
         img = Image.open(img_path).convert("RGB")
         target = self._ec_target(idx, img.width, img.height)
         return img, target
+
+    # ----------------------------------------- 3D (N,K,3) → (N,3K) xyxyvv
+    @staticmethod
+    def _to_xyxyvv(kpts3d: torch.Tensor) -> torch.Tensor:
+        """`(N, K, 3)` interleaved (x,y,v) → `(N, 3K)` flat as xyxyvv.
+
+        Layout: [x0, y0, x1, y1, …, xK-1, yK-1, v0, v1, …, vK-1]. This is what
+        prepare_for_cdn / DETRPoseHungarianMatcher / DETRPoseCriterion expect
+        (`Z = kp[:, 0:2K]`, `V = kp[:, 2K:3K]`).
+        """
+        n = kpts3d.shape[0]
+        if n == 0:
+            return kpts3d.new_zeros((0, kpts3d.shape[1] * kpts3d.shape[2] if kpts3d.ndim == 3 else 0))
+        xy = kpts3d[..., :2].reshape(n, -1)  # x0,y0,x1,y1,...
+        v = kpts3d[..., 2]                    # v0,v1,...
+        return torch.cat([xy, v], dim=-1)
 
     # ------------------------------------------------------------- __getitem__
     def __getitem__(self, idx):
@@ -208,6 +235,35 @@ class YoloPoseDataset(Dataset):
                 if hasattr(self._transforms, "set_epoch"):
                     self._transforms.set_epoch(self.epoch)
                 img, target = self._transforms(img, target)
+            # Sanity: torchvision v2 transforms that drop boxes (RandomIoUCrop,
+            # SanitizeBoundingBoxes, …) don't know about our `keypoints`
+            # field, so they break the row alignment. Detect and fail loud.
+            kpts3d = target.get("keypoints")
+            n_box = target["boxes"].shape[0]
+            if kpts3d is not None and kpts3d.shape[0] != n_box:
+                raise RuntimeError(
+                    f"YoloPoseDataset: post-transform target has "
+                    f"{n_box} boxes vs {kpts3d.shape[0]} keypoint rows. "
+                    "A geometric transform dropped boxes without filtering "
+                    "the custom `keypoints` field. Remove RandomIoUCrop / "
+                    "SanitizeBoundingBoxes / RandomZoomOut / RandomHorizontalFlip "
+                    "from this YAML's transforms (see ecpose_s_pallet.yaml)."
+                )
+            # Final layout conversion expected by EC pose model & criterion.
+            # Normalize xy to [0, 1] using the post-transform canvas size
+            # (transforms have already adjusted the image to its final size).
+            if kpts3d is not None and kpts3d.ndim == 3:
+                # Image is now a tensor (after ConvertPILImage) shape (C, H, W).
+                if isinstance(img, torch.Tensor) and img.ndim == 3:
+                    H, W = img.shape[-2], img.shape[-1]
+                else:
+                    W, H = (img.size if hasattr(img, "size")
+                            else (target["boxes"].canvas_size[1],
+                                  target["boxes"].canvas_size[0]))
+                kpts3d = kpts3d.clone()
+                kpts3d[..., 0] /= max(W, 1)
+                kpts3d[..., 1] /= max(H, 1)
+                target["keypoints"] = self._to_xyxyvv(kpts3d)
             return img, target
 
         # Legacy uint8-CHW path used by --simple Trainer.

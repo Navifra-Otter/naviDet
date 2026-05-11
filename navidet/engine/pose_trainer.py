@@ -93,7 +93,9 @@ class PoseSolver(BaseSolver):
                 self.postprocessor,
                 self.evaluator,
                 self.val_dataloader,
-                self.device
+                self.device,
+                epoch=self.last_epoch,
+                output_dir=str(self.output_dir),
             )
             for k in test_stats:
                 best_stat['epoch'] = self.last_epoch
@@ -155,12 +157,14 @@ class PoseSolver(BaseSolver):
             # eval ema model if exists
             if self.ema is not None:
                 test_stats = evaluate(
-                    self.ema.module, 
-                    self.postprocessor, 
+                    self.ema.module,
+                    self.postprocessor,
                     self.evaluator,
-                    self.val_dataloader, 
-                    self.device, 
-                    self.writer
+                    self.val_dataloader,
+                    self.device,
+                    self.writer,
+                    epoch=epoch,
+                    output_dir=str(self.output_dir),
                 )
                 for k in test_stats:
                     if self.writer and dist_utils.is_main_process():
@@ -170,12 +174,14 @@ class PoseSolver(BaseSolver):
             else:
                 # eval regular model
                 test_stats = evaluate(
-                    self.model, 
-                    self.postprocessor, 
+                    self.model,
+                    self.postprocessor,
                     self.evaluator,
-                    self.val_dataloader, 
-                    self.device, 
-                    self.writer
+                    self.val_dataloader,
+                    self.device,
+                    self.writer,
+                    epoch=epoch,
+                    output_dir=str(self.output_dir),
                 )
                 # Log regular model results
                 for k in test_stats:
@@ -236,15 +242,14 @@ class PoseSolver(BaseSolver):
                     f.write(json.dumps(log_stats) + "\n")
 
                 # for evaluation logs
-                if coco_evaluator is not None:
+                if self.evaluator is not None and "keypoints" in self.evaluator.coco_eval:
                     (self.output_dir / 'eval').mkdir(exist_ok=True)
-                    if "keypoints" in coco_evaluator.coco_eval:
-                        filenames = ['latest.pth']
-                        if epoch % 50 == 0:
-                            filenames.append(f'{epoch:03}.pth')
-                        for name in filenames:
-                            torch.save(coco_evaluator.coco_eval["keypoints"].eval,
-                                    self.output_dir / "eval" / name)
+                    filenames = ['latest.pth']
+                    if epoch % 50 == 0:
+                        filenames.append(f'{epoch:03}.pth')
+                    for name in filenames:
+                        torch.save(self.evaluator.coco_eval["keypoints"].eval,
+                                self.output_dir / "eval" / name)
 
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -259,6 +264,7 @@ class PoseSolver(BaseSolver):
                 self.evaluator,
                 self.val_dataloader,
                 self.device,
+                output_dir=str(self.output_dir),
             )
 
         # if self.output_dir:

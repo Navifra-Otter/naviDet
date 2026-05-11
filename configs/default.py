@@ -69,12 +69,16 @@ C.trainer.coco_eval.num_select = 100
 C.trainer.coco_eval.score_thresh = 0.0
 C.trainer.coco_eval.sigmas = []  # empty -> default [0.05] * nkpts
 
-C.wandb = CN()
+C.wandb = CN(new_allowed=True)
 C.wandb.enabled = False
 C.wandb.project = 'pose-estimation'
-C.wandb.entity = ''
-C.wandb.run_name = ''
+C.wandb.entity = ''       # team / username; empty → default
+C.wandb.run_name = ''     # auto-named when empty
 C.wandb.tags = []
+C.wandb.notes = ''
+C.wandb.group = ''        # group runs (e.g. 'pallet-ablation')
+C.wandb.mode = 'online'   # 'online' | 'offline' | 'disabled'
+C.wandb.log_freq = 10     # iters between wandb.log() calls (TB writer cadence)
 
 
 # lr_scheduler / optimizer are populated entirely from YAML. The minimal

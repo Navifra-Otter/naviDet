@@ -30,12 +30,16 @@ def get_sigmas(num_keypoints, device):
             .79, .79, .72, .72, .62, .62, 1.07, 1.07, .87, .87, .89, .89,
             .79, .79
         ]) / 10.0
+    elif num_keypoints == 4:
+        # Generic 4-corner objects (pallets, signs, plates, …) — uniform.
+        sigmas = np.full(4, 0.05, dtype=np.float32)
     elif num_keypoints == 3:
         sigmas = np.array([
             1.07, 1.07, 0.67
         ]) / 10.0
     else:
-        raise ValueError(f'Unsupported keypoints number {num_keypoints}')
+        # Generic fallback for any other K.
+        sigmas = np.full(num_keypoints, 0.05, dtype=np.float32)
     sigmas = np.concatenate([[0.1], sigmas]) # for the center of the human
     sigmas = torch.tensor(sigmas, device=device, dtype=torch.float32)
     return sigmas[None, :, None]
@@ -117,8 +121,8 @@ def prepare_for_cdn(dn_args, training, num_queries, num_classes, num_keypoints, 
 
         single_pad = int(max(known_num))
         pad_size = int(single_pad * 2 * dn_number)
-        positive_idx = torch.tensor(range(len(poses))).long().cuda().unsqueeze(0).repeat(dn_number, 1)
-        positive_idx += (torch.tensor(range(dn_number)) * len(poses) * 2).long().cuda().unsqueeze(1)
+        positive_idx = torch.tensor(range(len(poses)), device=device).long().unsqueeze(0).repeat(dn_number, 1)
+        positive_idx += (torch.tensor(range(dn_number), device=device) * len(poses) * 2).long().unsqueeze(1)
         positive_idx = positive_idx.flatten()
         negative_idx = positive_idx + len(poses)
 
@@ -144,15 +148,15 @@ def prepare_for_cdn(dn_args, training, num_queries, num_classes, num_keypoints, 
 
         input_pose_embed = inverse_sigmoid(known_poses_expand)
 
-        padding_label = torch.zeros(pad_size, hidden_dim * (num_keypoints + 1)).cuda()
-        padding_pose = torch.zeros(pad_size, num_keypoints+1).cuda()
+        padding_label = torch.zeros(pad_size, hidden_dim * (num_keypoints + 1), device=device)
+        padding_pose = torch.zeros(pad_size, num_keypoints + 1, device=device)
 
         input_query_label = padding_label.repeat(batch_size, 1, 1)
         input_query_pose = padding_pose[...,None].repeat(batch_size, 1, 1, 2)
 
         map_known_indice = torch.tensor([], device=device)
         if len(known_num):
-            map_known_indice = torch.cat([torch.tensor(range(num)) for num in known_num])  # [1,2, 1,2,3]
+            map_known_indice = torch.cat([torch.tensor(range(num), device=device) for num in known_num])
             map_known_indice = torch.cat([map_known_indice + single_pad * i for i in range(2 * dn_number)]).long()
         if len(known_bid):
             input_query_label[(known_bid.long(), map_known_indice)] = input_label_embed

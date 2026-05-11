@@ -40,14 +40,16 @@ class DETRPoseHungarianMatcher(nn.Module):
                 .26, .25, .25, .35, .35, .79, .79, .72, .72, .62, .62, 1.07,
                 1.07, .87, .87, .89, .89
             ], dtype=np.float32) / 10.0
-
         elif num_body_points==14:
             self.sigmas = np.array([
                 .79, .79, .72, .72, .62, .62, 1.07, 1.07, .87, .87, .89, .89,
                 .79, .79
             ]) / 10.0
+        elif num_body_points == 4:
+            self.sigmas = np.full(4, 0.05, dtype=np.float32)
         else:
-            raise NotImplementedError
+            # Generic fallback — uniform sigmas. Override if dataset-specific.
+            self.sigmas = np.full(num_body_points, 0.05, dtype=np.float32)
 
     @torch.no_grad()
     def forward(self, outputs, targets):

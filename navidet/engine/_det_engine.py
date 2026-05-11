@@ -16,7 +16,7 @@ from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.tensorboard import SummaryWriter
 
 from navidet.data import CocoEvaluator
-from navidet.utils import MetricLogger, SmoothedValue, dist_utils
+from navidet.utils import MetricLogger, SmoothedValue, dist_utils, printE, printT, printW
 from navidet.core.optimizer import ModelEMA
 
 
@@ -49,7 +49,7 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
                 outputs = model(samples, targets=targets)
 
             if torch.isnan(outputs['pred_boxes']).any() or torch.isinf(outputs['pred_boxes']).any():
-                print(outputs['pred_boxes'])
+                printW(f"NaN/Inf in pred_boxes — saving state to ./NaN.pth\n  pred_boxes={outputs['pred_boxes']}")
                 state = model.state_dict()
                 new_state = {}
                 for key, value in model.state_dict().items():
@@ -101,8 +101,7 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
         loss_value = sum(loss_dict_reduced.values())
 
         if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-            print(loss_dict_reduced)
+            printE(f"Loss is {loss_value}, stopping training\n  loss_dict={loss_dict_reduced}")
             sys.exit(1)
 
         metric_logger.update(loss=loss_value, **loss_dict_reduced)
@@ -117,7 +116,7 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
+    printT(f"Averaged stats: {metric_logger}")
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
@@ -156,7 +155,7 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
+    printT(f"Averaged stats: {metric_logger}")
     if coco_evaluator is not None:
         coco_evaluator.synchronize_between_processes()
 
@@ -197,8 +196,8 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
                     row.extend([f'{ap[k]:.2f}', f'{ap_50[k]:.2f}'])
             table_data.append(row)
 
-        print(f"\n### Class-wise Evaluation Metrics ###")
-        print(tabulate(table_data, headers=headers, tablefmt='pretty'))
+        printT("\n### Class-wise Evaluation Metrics ###\n"
+               + tabulate(table_data, headers=headers, tablefmt='pretty'))
         
     
     if coco_evaluator is not None:

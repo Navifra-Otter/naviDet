@@ -42,7 +42,7 @@ def printE(message=''):
 def printS(message=''):
     print(f" {colored_msg('[SYSTEMS]', 'blue')} {message}")
 
-master_only
+@master_only
 def printW(message=''):
     print(f" {colored_msg('[WARNING]', 'yellow')} {message}")
 
@@ -75,7 +75,6 @@ def time_check(func):
     return wrapper
 
 def signal_handler(sig, frame):
-    print('\n[Info] Ctrl+C 신호 감지! 프로그램을 종료합니다.')
     # 필요한 정리 작업(파일 닫기, 로그 저장 등)이 있다면 여기에 작성
     sys.exit(0)
 

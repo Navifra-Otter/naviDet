@@ -28,7 +28,7 @@ __all__ = ['CocoEvaluator',]
 
 @register()
 class CocoEvaluator(object):
-    def __init__(self, coco_gt, iou_types, verbose=True):
+    def __init__(self, coco_gt, iou_types, verbose=True, num_keypoints=None, kpt_oks_sigmas=None):
         assert isinstance(iou_types, (list, tuple))
         coco_gt = copy.deepcopy(coco_gt)
         self.coco_gt : COCO = coco_gt
@@ -36,9 +36,15 @@ class CocoEvaluator(object):
         self.iou_types = iou_types
         self.labels = [cat['name'] for cat in coco_gt.loadCats(coco_gt.getCatIds())] if verbose else None
 
+        if kpt_oks_sigmas is None and num_keypoints is not None:
+            kpt_oks_sigmas = np.array([0.05] * num_keypoints, dtype=np.float32)
+        self.kpt_oks_sigmas = kpt_oks_sigmas
+
         self.coco_eval = {}
         for iou_type in iou_types:
             self.coco_eval[iou_type] = COCOeval(coco_gt, iouType=iou_type)
+            if iou_type == 'keypoints' and self.kpt_oks_sigmas is not None:
+                self.coco_eval[iou_type].params.kpt_oks_sigmas = np.asarray(self.kpt_oks_sigmas, dtype=np.float32)
 
         self.img_ids = []
         self.eval_imgs = {k: [] for k in iou_types}
@@ -47,6 +53,8 @@ class CocoEvaluator(object):
         self.coco_eval = {}
         for iou_type in self.iou_types:
             self.coco_eval[iou_type] = COCOeval(self.coco_gt, iouType=iou_type)
+            if iou_type == 'keypoints' and self.kpt_oks_sigmas is not None:
+                self.coco_eval[iou_type].params.kpt_oks_sigmas = np.asarray(self.kpt_oks_sigmas, dtype=np.float32)
         self.img_ids = []
         self.eval_imgs = {k: [] for k in self.iou_types}
 
@@ -161,11 +169,15 @@ class CocoEvaluator(object):
             if len(prediction) == 0:
                 continue
 
-            boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
+            # `boxes` is required by COCO eval for the AP metric of the
+            # keypoint task. If the pose postprocessor doesn't emit them
+            # (DETRPosePostProcessor returns only scores/labels/keypoints),
+            # derive them as the tight bbox over visible keypoints.
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
             keypoints = prediction["keypoints"]
+            if "boxes" in prediction:
+                _ = convert_to_xywh(prediction["boxes"]).tolist()
             keypoints = keypoints.flatten(start_dim=1).tolist()
 
             coco_results.extend(
