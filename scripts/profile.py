@@ -132,18 +132,25 @@ def main():
     import torch
 
     if args.mtype == "navidet":
-        # --- 현재 개발 중인 YOLO6DoF 백엔드 (navieye 불필요) ---
+        # --- navidet 백엔드 (navieye 불필요). ckpt의 task로 6DoF/2D 자동 분기 ---
         if not args.ckpt:
             raise SystemExit("navidet 백엔드는 --ckpt 가 필요합니다.")
         # repo 루트를 import path에 추가 (navidet 패키지 인식)
         here = str(Path(__file__).resolve().parent)
         if here not in sys.path:
             sys.path.insert(0, here)
-        from navidet.module.predictor import YOLO6DoFPredictor
+        from navidet.core.model import TASK_PRESET
+        from navidet.module.predictor import YOLO6DoFPredictor, YOLOPosePredictor
 
         torch.backends.cudnn.benchmark = bool(args.cudnn_benchmark)
-        predictor = YOLO6DoFPredictor(args.ckpt, ini=args.ini, conf=args.conf)
-        mtype, device = "navidet", str(predictor.device)
+        # 체크포인트 meta만 가볍게 읽어 task 판별 (2D는 ini 불필요)
+        task = torch.load(args.ckpt, map_location="cpu",
+                          weights_only=False).get("task", "6dof")
+        if task in TASK_PRESET:                       # detect/segment/pose → 2D
+            predictor = YOLOPosePredictor(args.ckpt, conf=args.conf)
+        else:                                          # 6dof
+            predictor = YOLO6DoFPredictor(args.ckpt, ini=args.ini, conf=args.conf)
+        mtype, device = f"navidet:{task}", str(predictor.device)
         print("=" * 72)
         print(f"  ckpt           : {args.ckpt}")
         print(f"  model type     : {mtype}  (imgsz={predictor.imgsz}, nc={predictor.nc})")

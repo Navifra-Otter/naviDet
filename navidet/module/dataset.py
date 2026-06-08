@@ -53,7 +53,7 @@ def letterbox_depth(depth_m: np.ndarray, new: int, r: float, left: int, top: int
 
 
 class PoseDataset(Dataset):
-    def __init__(self, root: str, ini: str, imgsz: int = 640,
+    def __init__(self, root: str, ini: str | None = None, imgsz: int = 640,
                  depth_scale: float = 0.001, num_kpts: int = 4,
                  rmse_thresh: float = 0.05, limit: int = 0,
                  use_cache: bool = True, cache_name: str = "pose_labels",
@@ -71,9 +71,18 @@ class PoseDataset(Dataset):
         self.is_2d = task in ("pose", "detect", "segment")
         self.kpt_dim = kpt_shape[1]         # 2(xy) / 3(xy+vis)
 
-        intr = load_orbbec_ini(ini)
-        self.K0 = intr.K                    # 원본 color intrinsics
-        self.orig_wh = (intr.width, intr.height)
+        # 카메라 intrinsics는 6DoF에서만 필요(keypoint+depth → R,t,size 계산/캐시).
+        # 2D task(pose/detect/segment)는 K가 불필요하고, 라벨 정규화 기준 W,H도
+        # 각 이미지에서 직접 얻으므로 ini 없이 동작한다.
+        if ini:
+            intr = load_orbbec_ini(ini)
+            self.K0 = intr.K                # 원본 color intrinsics
+            self.orig_wh = (intr.width, intr.height)
+        elif self.is_2d:
+            self.K0 = None
+            self.orig_wh = None            # _getitem_2d에서 이미지 크기로 대체
+        else:
+            raise ValueError("6dof task는 카메라 intrinsics(ini)가 필요합니다.")
 
         # build_labels로 미리 구운 6DoF GT(npz)가 있으면 로드만 (반복 RANSAC 제거)
         cache_dir = os.path.join(root, cache_name)
@@ -113,11 +122,12 @@ class PoseDataset(Dataset):
             R_l.append(pose.R); t_l.append(pose.t); sz_l.append(pose.size)
         return cls_l, box_l, R_l, t_l, sz_l
 
-    def _gt_pose_original(self, lp):
+    def _gt_pose_original(self, lp, wh):
         """원본 픽셀 공간 2D GT 반환 — depth/RANSAC 불필요.
         반환: cls_l, box_l(xyxy px), kpt_l(각 [nk, kpt_dim] px, D=3이면 vis 포함).
-        라벨이 'cls cx cy w h kx1 ky1 [v1] ...' (정규화)인 표준 YOLO-pose 포맷."""
-        W, H = self.orig_wh
+        라벨이 'cls cx cy w h kx1 ky1 [v1] ...' (정규화)인 표준 YOLO-pose 포맷.
+        wh=(W,H)는 라벨 정규화 기준 원본 이미지 크기(해당 이미지에서 직접 취득)."""
+        W, H = wh
         cls_l, box_l, kpt_l = [], [], []
         for line in open(lp).read().strip().split("\n"):
             if not line.strip():
@@ -147,7 +157,7 @@ class PoseDataset(Dataset):
         stem = os.path.splitext(os.path.basename(lp))[0]
         img = Image.open(os.path.join(self.root, "images", stem + ".png")).convert("RGB")
 
-        cls_l, box_l, kpt_l = self._gt_pose_original(lp)
+        cls_l, box_l, kpt_l = self._gt_pose_original(lp, img.size)   # img.size=(W,H)
         rgb, r, left, top = letterbox_rgb(img, self.imgsz)
         x = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
 

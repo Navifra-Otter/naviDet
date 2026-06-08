@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from ..core.model import YOLO6DoF
+from ..core.model import YOLO6DoF, YOLOPose, TASK_PRESET
 from ..utils.camera import resolve_intrinsics
 from ..utils.nms import nms, xywh2xyxy
 
@@ -125,3 +125,90 @@ class YOLO6DoFPredictor:
         # autocast 출력(fp16) → 후처리(grid_sample 등)는 fp32로
         out = {"det": out["det"].float(), "depth": out["depth"].float()}
         return self._postprocess(out, K)
+
+
+class YOLOPosePredictor:
+    """2D 멀티태스크(pose/detect) 실시간 추론 래퍼.
+
+    YOLO6DoFPredictor와 동일 인터페이스(BGR np.ndarray → 결과 리스트)지만
+    카메라 intrinsics가 불필요하다(2D는 K를 쓰지 않음). detect/pose 체크포인트를
+    그대로 받아 박스(+키포인트)를 반환한다. `predictor.model`로 forward 후킹 가능.
+    """
+
+    def __init__(self, ckpt_path: str, device: str | None = None,
+                 conf: float = 0.25, iou: float = 0.5, half: bool | None = None,
+                 pre_topk: int = 300, fuse: bool = True):
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        ck = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+        task = ck.get("task", "pose")
+        assert task in TASK_PRESET, f"YOLOPosePredictor는 2D task 전용(받음: {task})"
+        self.task = task
+        self.nc = ck["nc"]
+        self.imgsz = ck["imgsz"]
+        self.kpt_shape = tuple(ck.get("kpt_shape", (4, 3)))
+        self.has_kpt = "pose" in TASK_PRESET[task]
+        self.conf, self.iou, self.pre_topk = conf, iou, pre_topk
+        self.half = (self.device.type == "cuda") if half is None else half
+
+        self.model = YOLOPose(nc=self.nc, scale=ck["scale"], tasks=TASK_PRESET[task],
+                              nm=ck.get("nm", 32), kpt_shape=self.kpt_shape).to(self.device)
+        self.model.load_state_dict(ck["model"])
+        self.model.eval()
+        if fuse:
+            self.model.fuse()                            # Conv+BN 융합 (추론 가속)
+
+    # ------------------------------------------------------------------ #
+    def _preprocess(self, frame_bgr: np.ndarray):
+        """BGR np.ndarray → 입력 텐서[1,3,S,S] (전부 GPU, K 불필요)."""
+        H0, W0 = frame_bgr.shape[:2]
+        S = self.imgsz
+        t = torch.from_numpy(frame_bgr).to(self.device, non_blocking=True)   # [H,W,3] uint8 BGR
+        t = t.permute(2, 0, 1).flip(0).float().div_(255.0).unsqueeze(0)       # [1,3,H,W] RGB
+
+        r = min(S / H0, S / W0)
+        nh, nw = round(H0 * r), round(W0 * r)
+        t = F.interpolate(t, size=(nh, nw), mode="bilinear", align_corners=False)
+        canvas = torch.full((1, 3, S, S), 114 / 255.0, device=self.device, dtype=t.dtype)
+        top, left = (S - nh) // 2, (S - nw) // 2
+        canvas[:, :, top:top + nh, left:left + nw] = t
+        return canvas
+
+    @torch.no_grad()
+    def _postprocess(self, dec: dict):
+        boxes = dec["boxes"][0].float()                  # [4, A] xywh px
+        scores = dec["scores"][0].float()                # [nc, A]
+        conf, cls = scores.max(0)
+
+        # NMS 전 top-k 프리필터 (앵커 정렬·NMS 비용 절감)
+        mask = conf > self.conf
+        idx = mask.nonzero(as_tuple=False).squeeze(1)
+        if idx.numel() == 0:
+            return []
+        if idx.numel() > self.pre_topk:
+            top = conf[idx].topk(self.pre_topk).indices
+            idx = idx[top]
+
+        xyxy = xywh2xyxy(boxes.T[idx])
+        keep = nms(xyxy, conf[idx], self.iou)
+        sel = idx[keep]
+
+        kpt_all = None
+        if self.has_kpt:
+            nk, D = self.kpt_shape
+            kpt_all = dec["kpt"][0].view(nk, D, -1).permute(2, 0, 1)[sel].float().cpu().numpy()
+        bx = xywh2xyxy(boxes.T[sel]).cpu().numpy()
+        c = conf[sel].cpu().numpy(); cl = cls[sel].cpu().numpy()
+        res = []
+        for k in range(len(sel)):
+            d = {"cls": int(cl[k]), "conf": float(c[k]), "box": bx[k]}
+            if kpt_all is not None:
+                d["kpt"] = kpt_all[k]
+            res.append(d)
+        return res
+
+    @torch.no_grad()
+    def __call__(self, frame_bgr: np.ndarray):
+        x = self._preprocess(frame_bgr)
+        with torch.autocast(device_type=self.device.type, enabled=self.half):
+            dec = self.model(x)                          # forward (후킹 지점)
+        return self._postprocess(dec)
