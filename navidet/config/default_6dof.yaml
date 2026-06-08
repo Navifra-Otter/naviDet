@@ -15,21 +15,21 @@ data:
   imgsz: 640                  # 입력 해상도 (얇은 박스라 640 이상 권장)
   pose_mode: face             # GT 생성: face(테두리 띠 평면+GT코너 복원, full 6DoF, 권장) |
                               #          full(팔레트 전면) | bottom(cart 세로) | corners(4코너)
-  use_cache: false            # pose_labels/*.npz 캐시 사용 여부. false면 매 epoch 즉석 GT
+  use_cache: True             # pose_labels/*.npz 캐시 사용 여부. false면 매 epoch 즉석 GT
                               # (pose_mode 변경 직후엔 stale 캐시를 피하려 false 권장.
                               #  대량 학습 전엔 build_labels로 캐시를 굽고 true 로)
   nc: 1                       # 클래스 수
   class_names: [cart]
 
 model:
-  scale: s                    # n/s/m/l/x
+  scale: m                    # n/s/m/l/x
   rot_repr: 6d                # 6d 또는 quat
   light_head: true            # true=경량 head, false=원본(무거운) head
 
 train:
   epochs: 100
-  batch: 8
-  gpus: auto                  # 멀티 GPU: auto(전체) | 개수(예: 2) | id목록(예: [0,1]) — batch가 GPU 수로 분할됨
+  batch: 32
+  gpus: [2, 3]                  # 멀티 GPU: auto(전체) | 개수(예: 2) | id목록(예: [0,1]) — batch가 GPU 수로 분할됨
   lr: 1.0e-3
   weight_decay: 5.0e-4
   workers: 4
@@ -52,10 +52,10 @@ loss:
 
 # 지식 증류 (DINOv3 → Student)
 distill:
-  teacher_ckpt: "checkpoints/dinov3/vit/dinov3_vits16_pretrain_lvd1689m-08c60483.pth"  # DINOv3 가중치(.pth) 로컬 경로(자동 다운로드는 403). 비우면 MockDINOv3
+  teacher_ckpt: "checkpoints/dinov3/vit/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth"  # DINOv3 가중치(.pth) 로컬 경로(자동 다운로드는 403). 비우면 MockDINOv3
   repo_dir: ""                # 캐시된 DINOv3 레포 경로. 지정 시 source='local'로 GitHub 접근 생략(선택)
-  hub_name: dinov3_vits16     # torch.hub 모델명 (예: dinov3_vitb16). teacher_dim도 맞출 것
-  teacher_dim: 384            # DINOv3 임베딩 차원 (ViT-S=384, B=768, L=1024) — vitb16이면 768
+  hub_name: dinov3_vitb16     # torch.hub 모델명 (예: dinov3_vitb16). teacher_dim도 맞출 것
+  teacher_dim: 768            # DINOv3 임베딩 차원 (ViT-S=384, B=768, L=1024) — vitb16이면 768
   patch_size: 16              # DINOv3 patch 크기
   num_register_tokens: 4      # 레지스터 토큰 수 (DINOv3=4, +CLS 1)
   teacher_imgsz: 640          # teacher 입력 크기 (patch_size 배수)

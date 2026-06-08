@@ -31,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from navidet.core.model import YOLO6DoF, YOLOPose, TASK_PRESET
+from navidet.core.model import Det6DoF, MultiTaskDet, TASK_PRESET
 from navidet.module.dataset import letterbox_rgb
 from navidet.module.infer import render_sample
 from navidet.tools.predict import render_pose_sample
@@ -92,10 +92,10 @@ def main():
 
     if is_2d:
         kpt_shape = tuple(ck.get("kpt_shape", (4, 3)))
-        model = YOLOPose(nc=nc, scale=ck["scale"], tasks=TASK_PRESET[task],
+        model = MultiTaskDet(nc=nc, scale=ck["scale"], tasks=TASK_PRESET[task],
                          nm=ck.get("nm", 32), kpt_shape=kpt_shape).to(device)
     else:
-        model = YOLO6DoF(nc=nc, scale=ck["scale"], rot_repr=ck["rot_repr"],
+        model = Det6DoF(nc=nc, scale=ck["scale"], rot_repr=ck["rot_repr"],
                          light_head=ck.get("light_head", True)).to(device)
     model.load_state_dict(ck["model"]); model.eval()
 

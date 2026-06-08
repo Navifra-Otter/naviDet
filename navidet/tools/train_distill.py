@@ -21,13 +21,14 @@ Total Loss = α(epoch)·Distillation + β(epoch)·Task
 from __future__ import annotations
 
 import argparse
+import math
 import os
 
 import torch
 import yaml
 from torch.utils.data import DataLoader
 
-from navidet.core.model import YOLO6DoF, YOLOPose, TASK_PRESET
+from navidet.core.model import Det6DoF, MultiTaskDet, TASK_PRESET
 from navidet.module.dataset import PoseDataset, collate_fn
 from navidet.module.distill import (DINOv3Teacher, FeatureProjector, MockDINOv3,
                                      feature_distillation_loss, loss_weights)
@@ -237,13 +238,13 @@ def main():
     light_head = m.get("light_head", True)
     nm = m.get("nm", 32)
     if is_6dof:
-        student = YOLO6DoF(nc=d.nc, scale=m.scale, rot_repr=m.rot_repr,
+        student = Det6DoF(nc=d.nc, scale=m.scale, rot_repr=m.rot_repr,
                            light_head=light_head).to(device)
         loss_fn = Pose6DoFLoss(nc=d.nc, rot_repr=m.rot_repr,
                                weights=cfg.loss.to_dict()).to(device)
     else:
         tasks = TASK_PRESET[task]
-        student = YOLOPose(nc=d.nc, scale=m.scale, tasks=tasks, nm=nm,
+        student = MultiTaskDet(nc=d.nc, scale=m.scale, tasks=tasks, nm=nm,
                            kpt_shape=kpt_shape).to(device)
         loss_fn = MultiTaskLoss(nc=d.nc, strides=student.head.strides, tasks=tasks,
                                 kpt_shape=kpt_shape, nm=nm,
@@ -255,6 +256,15 @@ def main():
     optimizer = torch.optim.AdamW(
         list(student.parameters()) + list(projector.parameters()),
         lr=tr.lr, weight_decay=tr.weight_decay)
+
+    # LR 스케줄러 — train.py와 동일한 warmup(3 epoch) + cosine decay
+    def lr_lambda(ep):
+        warm = 3
+        if ep < warm:
+            return (ep + 1) / warm
+        prog = (ep - warm) / max(1, tr.epochs - warm)
+        return 0.5 * (1 + math.cos(math.pi * prog)) * 0.99 + 0.01
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     scaler = torch.amp.GradScaler(enabled=tr.amp and device.type == "cuda")
 
     # 멀티 GPU: student+projector+teacher+손실을 한 모듈로 묶어 DataParallel로 분산.
@@ -277,6 +287,7 @@ def main():
         stats, a, b = train_one_epoch(step_module, train_loader, optimizer, device,
                                       ep, tr.epochs, dc, scaler if tr.amp else None,
                                       amp=tr.amp, task=task)
+        scheduler.step()
         # distill 전용 정보(α/β/distill)는 prefix로, 나머지(손실·pose지표·저장)는 동일
         prefix = f"α={a:.3f} β={b:.3f} distill={stats['distill']:.4f} "
         make_ckpt = lambda e=ep: {"model": student.state_dict(),

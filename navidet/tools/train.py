@@ -18,7 +18,7 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
-from navidet.core.model import YOLO6DoF, YOLOPose, TASK_PRESET
+from navidet.core.model import Det6DoF, MultiTaskDet, TASK_PRESET
 from navidet.module.dataset import PoseDataset, collate_fn
 from navidet.module.loss import Pose6DoFLoss
 from navidet.module.loss_mt import MultiTaskLoss
@@ -155,13 +155,13 @@ def main():
     if is_2d:
         tasks = TASK_PRESET[task]
         nm = m.get("nm", 32)
-        model = YOLOPose(nc=d.nc, scale=m.scale, tasks=tasks, nm=nm,
+        model = MultiTaskDet(nc=d.nc, scale=m.scale, tasks=tasks, nm=nm,
                          kpt_shape=kpt_shape).to(device)
         loss_fn = MultiTaskLoss(nc=d.nc, strides=model.head.strides, tasks=tasks,
                                 kpt_shape=kpt_shape, nm=nm,
                                 weights=cfg.loss.to_dict()).to(device)
     else:
-        model = YOLO6DoF(nc=d.nc, scale=m.scale, rot_repr=m.rot_repr,
+        model = Det6DoF(nc=d.nc, scale=m.scale, rot_repr=m.rot_repr,
                          light_head=light_head).to(device)
         loss_fn = Pose6DoFLoss(nc=d.nc, rot_repr=m.rot_repr,
                                weights=cfg.loss.to_dict()).to(device)

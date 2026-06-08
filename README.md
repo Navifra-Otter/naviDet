@@ -1,12 +1,12 @@
-# navidet — YOLOv11 기반 통합 검출 프레임워크
+# navidet — CSP 백본 기반 통합 검출 프레임워크
 
 하나의 백본·넥·데이터 파이프라인을 공유하면서 두 계열 모델을 제공한다.
 `model.task`(config) 또는 `build_model(task=...)`로 선택한다.
 
 - **6dof** — 1-stage 6DoF Object Pose Estimation. 2D 검출 + 회전(6D) + 크기를 회귀하고
-  Depth Head의 dense depth를 unprojection하여 translation을 복원 (`YOLO6DoF`).
-- **pose / detect** — 2D 멀티태스크. 표준 YOLO11 방식의 박스 + 키포인트(+세그) 회귀
-  (`YOLOPose` + `MultiTaskHead`). Edge PC 실시간 추론을 가정해 nano/small 스케일 기본.
+  Depth Head의 dense depth를 unprojection하여 translation을 복원 (`Det6DoF`).
+- **pose / detect** — 2D 멀티태스크. 표준 anchor-free 방식의 박스 + 키포인트(+세그) 회귀
+  (`MultiTaskDet` + `MultiTaskHead`). Edge PC 실시간 추론을 가정해 nano/small 스케일 기본.
 
 > segment task는 head/loss에 구현돼 있으나, 현재 데이터셋에 마스크 라벨이 없어 학습은
 > 미배선(마스크 라벨 확보 시 dataset GT만 추가하면 동작).

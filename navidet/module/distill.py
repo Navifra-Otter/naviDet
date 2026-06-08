@@ -1,5 +1,5 @@
 """
-DINOv3(Teacher) → YOLO6DoF(Student) Knowledge Distillation 구성요소.
+DINOv3(Teacher) → Det6DoF(Student) Knowledge Distillation 구성요소.
 
 4가지 기법:
   1. Task-Specialized Teacher : 미세조정된 DINOv3를 frozen(eval + no_grad)으로 고정

@@ -1,9 +1,8 @@
 """
-YOLOv11 스타일의 기본 빌딩 블록 모음.
+CSP 기반 컨볼루션 빌딩 블록 모음.
 
-Ultralytics YOLOv11 백본/넥을 구성하는 핵심 모듈(Conv, Bottleneck, C3k2, SPPF,
-C2PSA)을 최소 의존성으로 재구현한 것입니다. 실제 ultralytics 가중치를 로드하려면
-채널/레이어 명세를 ultralytics yaml과 맞춰주면 됩니다.
+백본/넥을 구성하는 핵심 모듈(Conv, Bottleneck, CSPLayer, SPPF, PSALayer)을
+PyTorch 만으로 독립 구현한 것입니다. 외부 라이브러리 의존성은 없습니다.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ def fuse_conv_bn(conv: nn.Conv2d, bn: nn.BatchNorm2d) -> nn.Conv2d:
 
 
 class Conv(nn.Module):
-    """표준 Conv-BN-SiLU 블록 (YOLOv11 기본 단위)."""
+    """표준 Conv-BN-SiLU 블록 (기본 단위)."""
 
     default_act = nn.SiLU()
 
@@ -83,8 +82,8 @@ class Bottleneck(nn.Module):
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
 
-class C3k(nn.Module):
-    """C3k: 3x3 커널을 쓰는 작은 CSP 블록 (C3k2 내부에서 사용)."""
+class CSPBlock(nn.Module):
+    """CSPBlock: 3x3 커널을 쓰는 작은 CSP 블록 (CSPLayer 내부에서 사용)."""
 
     def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = True, e: float = 0.5):
         super().__init__()
@@ -98,12 +97,12 @@ class C3k(nn.Module):
         return self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), dim=1))
 
 
-class C3k2(nn.Module):
+class CSPLayer(nn.Module):
     """
-    YOLOv11의 메인 CSP 스테이지 블록.
+    메인 CSP 스테이지 블록.
 
     입력을 2분할(split)하여 한 갈래만 n개의 블록을 통과시키고 다시 concat 하는
-    CSP 구조. c3k=True면 내부 블록으로 C3k를, False면 Bottleneck을 사용.
+    CSP 구조. c3k=True면 내부 블록으로 CSPBlock를, False면 Bottleneck을 사용.
     """
 
     def __init__(self, c1: int, c2: int, n: int = 1, c3k: bool = False,
@@ -112,7 +111,7 @@ class C3k2(nn.Module):
         self.c = int(c2 * e)
         self.cv1 = Conv(c1, 2 * self.c, 1, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1, 1)
-        block = C3k if c3k else Bottleneck
+        block = CSPBlock if c3k else Bottleneck
         self.m = nn.ModuleList(
             block(self.c, self.c, shortcut=shortcut) if c3k
             else block(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
@@ -145,7 +144,7 @@ class SPPF(nn.Module):
 
 
 class Attention(nn.Module):
-    """C2PSA 내부의 멀티헤드 셀프 어텐션 (positional-aware)."""
+    """PSALayer 내부의 멀티헤드 셀프 어텐션 (positional-aware)."""
 
     def __init__(self, dim: int, num_heads: int = 8, attn_ratio: float = 0.5):
         super().__init__()
@@ -185,9 +184,9 @@ class PSABlock(nn.Module):
         return x
 
 
-class C2PSA(nn.Module):
+class PSALayer(nn.Module):
     """
-    YOLOv11의 어텐션 스테이지(보통 백본 마지막, SPPF 뒤).
+    어텐션 스테이지(보통 백본 마지막, SPPF 뒤).
     CSP 형태로 절반 채널에만 PSA 블록을 적용해 비용을 억제.
     """
 

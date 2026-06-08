@@ -16,7 +16,7 @@ import argparse
 import numpy as np
 import torch
 
-from navidet.core.model import YOLO6DoF
+from navidet.core.model import Det6DoF
 from navidet.module.dataset import PoseDataset
 from navidet.utils.config import load_config
 from navidet.utils.geometry import geodesic_loss
@@ -77,7 +77,7 @@ def main():
             f"체크포인트 task='{ck.get('task')}' (pose/detect)는 미지원입니다. "
             f"pose 시각화는 `python -m navidet.tools.predict`를 사용하세요.")
     nc, rd, imgsz = ck["nc"], (6 if ck["rot_repr"] == "6d" else 4), ck["imgsz"]
-    model = YOLO6DoF(nc=nc, scale=ck["scale"], rot_repr=ck["rot_repr"],
+    model = Det6DoF(nc=nc, scale=ck["scale"], rot_repr=ck["rot_repr"],
                      light_head=ck.get("light_head", True)).to(device)
     model.load_state_dict(ck["model"]); model.eval().fuse()
     print(f"ckpt={p.ckpt}  light_head={ck.get('light_head', True)}  "

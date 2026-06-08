@@ -72,7 +72,7 @@ def plot_history(history: list[dict], out_path: str):
             ax.plot(epochs, [(h["val"] or {}).get(key) for h in history], "-s", ms=3, color="tab:red")
         ax.set_title(title); ax.set_xlabel("epoch"); ax.grid(True, alpha=0.3)
 
-    fig.suptitle("YOLO6DoF training", fontsize=14)
+    fig.suptitle("Det6DoF training", fontsize=14)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)

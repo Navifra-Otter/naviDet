@@ -1,5 +1,5 @@
 """
-YOLO6DoF 실시간 추론 래퍼 (최적화판).
+Det6DoF 실시간 추론 래퍼 (최적화판).
 
 naviEYE pose predictor와 동일 인터페이스로, BGR np.ndarray 프레임 하나를 받아
 preprocess → forward → postprocess를 수행한다.
@@ -17,12 +17,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from ..core.model import YOLO6DoF, YOLOPose, TASK_PRESET
+from ..core.model import Det6DoF, MultiTaskDet, TASK_PRESET
 from ..utils.camera import resolve_intrinsics
 from ..utils.nms import nms, xywh2xyxy
 
 
-class YOLO6DoFPredictor:
+class Det6DoFPredictor:
     def __init__(self, ckpt_path: str, ini: str | None = None,
                  device: str | None = None, conf: float = 0.25, iou: float = 0.5,
                  half: bool | None = None, pre_topk: int = 300, fuse: bool = True,
@@ -35,7 +35,7 @@ class YOLO6DoFPredictor:
         self.conf, self.iou, self.pre_topk = conf, iou, pre_topk
         self.half = (self.device.type == "cuda") if half is None else half
 
-        self.model = YOLO6DoF(nc=self.nc, scale=ck["scale"], rot_repr=ck["rot_repr"],
+        self.model = Det6DoF(nc=self.nc, scale=ck["scale"], rot_repr=ck["rot_repr"],
                               light_head=ck.get("light_head", True)).to(self.device)
         self.model.load_state_dict(ck["model"])
         self.model.eval()
@@ -127,10 +127,10 @@ class YOLO6DoFPredictor:
         return self._postprocess(out, K)
 
 
-class YOLOPosePredictor:
+class MultiTaskPredictor:
     """2D 멀티태스크(pose/detect) 실시간 추론 래퍼.
 
-    YOLO6DoFPredictor와 동일 인터페이스(BGR np.ndarray → 결과 리스트)지만
+    Det6DoFPredictor와 동일 인터페이스(BGR np.ndarray → 결과 리스트)지만
     카메라 intrinsics가 불필요하다(2D는 K를 쓰지 않음). detect/pose 체크포인트를
     그대로 받아 박스(+키포인트)를 반환한다. `predictor.model`로 forward 후킹 가능.
     """
@@ -141,7 +141,7 @@ class YOLOPosePredictor:
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         ck = torch.load(ckpt_path, map_location=self.device, weights_only=False)
         task = ck.get("task", "pose")
-        assert task in TASK_PRESET, f"YOLOPosePredictor는 2D task 전용(받음: {task})"
+        assert task in TASK_PRESET, f"MultiTaskPredictor는 2D task 전용(받음: {task})"
         self.task = task
         self.nc = ck["nc"]
         self.imgsz = ck["imgsz"]
@@ -150,7 +150,7 @@ class YOLOPosePredictor:
         self.conf, self.iou, self.pre_topk = conf, iou, pre_topk
         self.half = (self.device.type == "cuda") if half is None else half
 
-        self.model = YOLOPose(nc=self.nc, scale=ck["scale"], tasks=TASK_PRESET[task],
+        self.model = MultiTaskDet(nc=self.nc, scale=ck["scale"], tasks=TASK_PRESET[task],
                               nm=ck.get("nm", 32), kpt_shape=self.kpt_shape).to(self.device)
         self.model.load_state_dict(ck["model"])
         self.model.eval()

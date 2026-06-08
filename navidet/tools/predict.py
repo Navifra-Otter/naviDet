@@ -19,7 +19,7 @@ import random
 import torch
 from PIL import Image, ImageDraw
 
-from navidet.core.model import YOLO6DoF, YOLOPose, TASK_PRESET
+from navidet.core.model import Det6DoF, MultiTaskDet, TASK_PRESET
 from navidet.messaging.publisher import PosePublisher
 from navidet.module.dataset import PoseDataset
 from navidet.module.infer import render_sample
@@ -119,10 +119,10 @@ def main():
 
     if is_2d:
         kpt_shape = tuple(ckpt.get("kpt_shape", (4, 3)))
-        model = YOLOPose(nc=ckpt["nc"], scale=ckpt["scale"], tasks=TASK_PRESET[task],
+        model = MultiTaskDet(nc=ckpt["nc"], scale=ckpt["scale"], tasks=TASK_PRESET[task],
                          nm=ckpt.get("nm", 32), kpt_shape=kpt_shape).to(device)
     else:
-        model = YOLO6DoF(nc=ckpt["nc"], scale=ckpt["scale"], rot_repr=ckpt["rot_repr"],
+        model = Det6DoF(nc=ckpt["nc"], scale=ckpt["scale"], rot_repr=ckpt["rot_repr"],
                          light_head=ckpt.get("light_head", True)).to(device)
     model.load_state_dict(ckpt["model"]); model.eval()
 

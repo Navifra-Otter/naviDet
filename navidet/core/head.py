@@ -1,5 +1,5 @@
 """
-YOLO Head 모음 — 한 패키지에서 두 계열의 head를 함께 제공한다.
+검출 Head 모음 — 한 패키지에서 두 계열의 head를 함께 제공한다.
 
   · Pose6DoFHead + DepthHead : 6DoF Object Pose Estimation (Direction B)
   · MultiTaskHead   + Proto  : 2D 멀티태스크 (Detection + Segmentation + Pose)
@@ -8,7 +8,7 @@ YOLO Head 모음 — 한 패키지에서 두 계열의 head를 함께 제공한�
 아래 설명은 Pose6DoFHead(6DoF) 기준이며, 멀티태스크 head는 MultiTaskHead 참조.
 
 --------------------------------------------------------------------------
-6DoF Pose Estimation을 위한 Custom YOLO Head (Direction B - Depth + Rotation Regression).
+6DoF Pose Estimation을 위한 Custom Head (Direction B - Depth + Rotation Regression).
 
 다이어그램 구조에 맞춘 멀티태스크 설계. 멀티스케일 각 위치(anchor point)마다
 디커플드(decoupled) 브랜치로 아래를 동시에 예측한다.
@@ -24,7 +24,7 @@ Translation(X,Y,Z)은 별도 DepthHead가 만든 dense depth map에서 bbox 중�
 
 설계 포인트
 ------------
-- Anchor-free (YOLOv8/11 방식): 각 grid cell 중심 1점을 anchor point로 사용.
+- Anchor-free: 각 grid cell 중심 1점을 anchor point로 사용.
 - Decoupled head: box / obj+cls / rot / size 브랜치를 분리해 태스크 간섭 완화.
 - Rotation은 연속 표현(6D)을 기본으로 하여 학습 안정성 확보.
 """
@@ -281,7 +281,7 @@ class Proto(nn.Module):
 
 class MultiTaskHead(nn.Module):
     """
-    Detect(+Segment +Pose) 통합 head — 표준 2D 방식(Ultralytics YOLO11 계열).
+    Detect(+Segment +Pose) 통합 head — 표준 anchor-free 2D 방식.
 
     멀티스케일 각 anchor point마다 디커플드 브랜치로 예측:
         Detect   : 2D BBox(DFL 분포 l,t,r,b) + Class score(nc)

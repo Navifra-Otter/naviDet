@@ -1,0 +1,13 @@
+naviDet
+Copyright 2026 Navifra
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The neural network components (CSP-based backbone, PAN neck, detection /
+segmentation / pose / 6DoF heads, and convolutional building blocks) are an
+independent implementation written from architectural descriptions using
+PyTorch only. The project does not depend on, bundle, or load weights from the
+Ultralytics library or any AGPL-licensed software.
+
+External pretrained weights, when used (e.g. DINOv3 as a distillation teacher),
+are obtained separately by the user and remain subject to their own licenses.

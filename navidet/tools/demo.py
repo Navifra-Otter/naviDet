@@ -6,7 +6,7 @@
 
 import torch
 
-from navidet import Pose6DoFLoss, YOLO6DoF
+from navidet import Pose6DoFLoss, Det6DoF
 
 
 def random_rotations(B, M, device):
@@ -39,7 +39,7 @@ def make_dummy_targets(B, M, img=640, depth_hw=(320, 320), device="cpu"):
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     B, nc = 2, 3
-    model = YOLO6DoF(nc=nc, scale="n", rot_repr="6d").to(device)
+    model = Det6DoF(nc=nc, scale="n", rot_repr="6d").to(device)
     loss_fn = Pose6DoFLoss(nc=nc, rot_repr="6d").to(device)
     x = torch.randn(B, 3, 640, 640, device=device)
 

@@ -15,6 +15,9 @@ data:
   rmse_thresh: 0.05           # RANSAC 잔차 > 이 값(m)인 객체는 학습 제외
   imgsz: 640                  # 입력 해상도 (얇은 박스라 640 이상 권장)
   pose_mode: full             # GT 생성: full(팔레트 전면) | bottom(cart 등 세로 구조)
+  use_cache: True             # pose_labels/*.npz 캐시 사용 여부. false면 매 epoch 즉석 GT
+                              # (pose_mode 변경 직후엔 stale 캐시를 피하려 false 권장.
+                              #  대량 학습 전엔 build_labels로 캐시를 굽고 true 로)
   nc: 1                       # 클래스 수
   class_names: [cart]
 
@@ -26,16 +29,16 @@ model:
 
 train:
   epochs: 100
-  batch: 8
-  gpus: auto                  # 멀티 GPU: auto(전체) | 개수(예: 2) | id목록(예: [0,1]) — batch가 GPU 수로 분할됨
-  lr: 5.0e-4
+  batch: 32
+  gpus: [0, 1]                  # 멀티 GPU: auto(전체) | 개수(예: 2) | id목록(예: [0,1]) — batch가 GPU 수로 분할됨
+  lr: 1.0e-3
   weight_decay: 5.0e-4
   workers: 4
   amp: true                   # mixed precision
   limit: 0                    # 디버그용 프레임 제한 (0=전체)
   out: runs/pose
   save_interval: 10           # 몇 epoch마다 체크포인트/곡선 저장 (best는 항상, 마지막은 항상)
-  val_viz_num: 4              # 매 epoch 검증 시각화할 고정 샘플 수 (0=끔)
+  val_viz_num: 10              # 매 epoch 검증 시각화할 고정 샘플 수 (0=끔)
 
 # 손실 가중치 (MultiTaskLoss)
 loss:
@@ -48,8 +51,7 @@ loss:
 
 # 지식 증류 (DINOv3 → Student)
 distill:
-  teacher_ckpt: ""            # DINOv3 가중치(.pth) 로컬 경로. 비우면 MockDINOv3(스모크).
-                              # 자동 다운로드는 라이선스 게이트로 403 → 직접 받아 경로 지정.
+  teacher_ckpt: "checkpoints/dinov3/vit/dinov3_vits16_pretrain_lvd1689m-08c60483.pth"            # DINOv3 가중치(.pth) 로컬 경로. 비우면 MockDINOv3(스모크).
   repo_dir: ""                # 캐시된 DINOv3 레포 경로(예: ~/.cache/torch/hub/facebookresearch_dinov3_main).
                               # 지정하면 source='local'로 빌드해 GitHub 접근도 생략(선택).
   hub_name: dinov3_vits16     # torch.hub 모델명 (예: dinov3_vitb16). teacher_dim도 맞출 것
