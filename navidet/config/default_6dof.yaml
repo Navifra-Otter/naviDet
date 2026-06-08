@@ -1,0 +1,75 @@
+# ============================================================
+#  YOLO6DoF 설정 — 이 파일만 수정하면 학습/추론을 제어할 수 있다.
+#  CLI override 예: --set train.epochs=50 data.imgsz=512
+# ============================================================
+
+data:
+  train_root: "/media/otter/otterHD/mando_aug/train"
+  val_root:   "/media/otter/otterHD/mando_aug/valid"
+  ini:        "/media/otter/otterHD/mando_aug/CameraParam_Orbbec Femto BoltCL8855300X5_Color1920x1080_Depth640x576.ini"
+  # train_root: "/media/otter/otterHD/dataset/pallet_data/data_merge/6dof2/test/train"
+  # val_root:   "/media/otter/otterHD/dataset/pallet_data/data_merge/6dof2/test/valid"
+  # ini:        "/media/otter/otterHD/dataset/pallet_data/data_merge/6dof2/test/CameraParam_Orbbec Femto BoltCL8855300X5_Color1920x1080_Depth640x576.ini"
+  depth_scale: 0.001          # depth PNG(uint16) → meter (mm이면 0.001)
+  rmse_thresh: 0.05           # RANSAC 잔차 > 이 값(m)인 객체는 학습 제외
+  imgsz: 640                  # 입력 해상도 (얇은 박스라 640 이상 권장)
+  pose_mode: face             # GT 생성: face(테두리 띠 평면+GT코너 복원, full 6DoF, 권장) |
+                              #          full(팔레트 전면) | bottom(cart 세로) | corners(4코너)
+  use_cache: false            # pose_labels/*.npz 캐시 사용 여부. false면 매 epoch 즉석 GT
+                              # (pose_mode 변경 직후엔 stale 캐시를 피하려 false 권장.
+                              #  대량 학습 전엔 build_labels로 캐시를 굽고 true 로)
+  nc: 3                       # 클래스 수
+  class_names: [cart_white, cart_blue, cart_gray]
+
+model:
+  scale: s                    # n/s/m/l/x
+  rot_repr: 6d                # 6d 또는 quat
+  light_head: true            # true=경량 head, false=원본(무거운) head
+
+train:
+  epochs: 100
+  batch: 8
+  lr: 5.0e-4
+  weight_decay: 5.0e-4
+  workers: 4
+  amp: true                   # mixed precision
+  limit: 0                    # 디버그용 프레임 제한 (0=전체)
+  out: runs/6dof/mando_cart
+  save_interval: 10           # 몇 epoch마다 체크포인트/곡선 저장 (best는 항상, 마지막은 항상)
+  val_viz_num: 4              # 매 epoch 검증 시각화할 고정 샘플 수 (0=끔)
+
+# 손실 가중치
+loss:
+  box: 7.5
+  dfl: 1.5
+  obj: 1.0
+  cls: 0.5
+  rot: 2.0
+  size: 1.0
+  depth: 1.0
+  trans: 2.0
+
+# 지식 증류 (DINOv3 → Student)
+distill:
+  teacher_ckpt: "checkpoints/dinov3/vit/dinov3_vits16_pretrain_lvd1689m-08c60483.pth"            # 미세조정된 DINOv3 가중치(.pth). 비우면 MockDINOv3(스모크)
+  hub_name: dinov3_vits16     # torch.hub 모델명 (ckpt 지정 시)
+  teacher_dim: 384            # DINOv3 임베딩 차원 (ViT-S=384, B=768, L=1024)
+  patch_size: 16              # DINOv3 patch 크기
+  num_register_tokens: 4      # 레지스터 토큰 수 (DINOv3=4, +CLS 1)
+  teacher_imgsz: 640          # teacher 입력 크기 (patch_size 배수)
+  loss: cosine                # 증류 손실: cosine | mse
+  align: teacher              # 특징 grid 정렬 기준: teacher | student
+  alpha0: 1.0                 # 초기 distill 비중 (→ 0 으로 감소)
+  beta0: 0.3                  # 초기 task 비중
+  beta1: 1.0                  # 후반 task 비중 (→ 증가)
+  sched: cosine               # α 스케줄: cosine | linear
+
+# 추론/시각화
+predict:
+  ckpt: runs/6dof/mando_cart/best.pt
+  conf: 0.25                  # confidence 임계값
+  iou: 0.5                    # NMS IoU 임계값
+  num: 12                     # 시각화할 프레임 수
+  out: _pred
+  seed: 0
+  publish_json: true          # 결과를 _pred/preds.jsonl 로 발행

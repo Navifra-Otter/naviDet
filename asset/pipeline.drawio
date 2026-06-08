@@ -1,0 +1,188 @@
+<mxfile host="app.diagrams.net" agent="navidet" version="24.0.0">
+  <diagram id="navidet_pipeline" name="navidet 6DoF pipeline">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1120" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ====================== BAND BACKGROUNDS ====================== -->
+        <mxCell id="band1" value="① 6DoF GT 생성  (navidet/module/pose_label.py · mode=&quot;face&quot;)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;verticalAlign=top;align=left;fontStyle=1;fontSize=14;opacity=70;spacingLeft=12;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="1480" height="350" as="geometry" />
+        </mxCell>
+        <mxCell id="band2" value="② 데이터셋 / 로더  (navidet/module/dataset.py)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;verticalAlign=top;align=left;fontStyle=1;fontSize=14;opacity=70;spacingLeft=12;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="420" width="1480" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="band3" value="③ 학습  (tools/train.py · tools/train_distill.py)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FFA726;verticalAlign=top;align=left;fontStyle=1;fontSize=14;opacity=70;spacingLeft=12;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="570" width="1480" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="band4" value="④ 추론 · 평가 · 발행  (predictor.py · eval.py · messaging/publisher.py)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;verticalAlign=top;align=left;fontStyle=1;fontSize=14;opacity=70;spacingLeft=12;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="900" width="1480" height="210" as="geometry" />
+        </mxCell>
+
+        <!-- ====================== INPUTS ====================== -->
+        <mxCell id="in_rgb" value="RGB 이미지&#10;images/*.png" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1E88E5;" vertex="1" parent="1">
+          <mxGeometry x="90" y="80" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="in_depth" value="Depth PNG (uint16)&#10;depth/*.png  × 0.001 → m" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1E88E5;" vertex="1" parent="1">
+          <mxGeometry x="320" y="80" width="210" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="in_lbl" value="YOLO kpt 라벨&#10;cls cx cy w h + 4 keypoints" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1E88E5;" vertex="1" parent="1">
+          <mxGeometry x="560" y="80" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="in_ini" value="Camera .ini&#10;intrinsics K" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1E88E5;" vertex="1" parent="1">
+          <mxGeometry x="810" y="80" width="180" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ====================== GT STEPS ====================== -->
+        <mxCell id="parse" value="parse_yolo_kpt_label&#10;→ cls, bbox, kpts (TR,BR,BL,TL)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="560" y="155" width="220" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lbl_k2p" value="keypoints_to_pose(mode=&quot;face&quot;)" style="text;html=1;align=left;fontStyle=1;fontSize=12;fontColor=#1565C0;" vertex="1" parent="1">
+          <mxGeometry x="70" y="212" width="360" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="s_border" value="sample_face_border&#10;테두리 띠(좌·우·하, 상단 제외)&#10;모양유지 확장(expand)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="70" y="238" width="250" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s_unproj" value="rgbd_unproject&#10;픽셀 + depth → 3D 점군&#10;(0.1 &lt; d &lt; max 유효점)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="345" y="238" width="250" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s_plane" value="ransac_plane_full&#10;3D RANSAC 평면 (c, n)&#10;인라이어 / RMSE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="620" y="238" width="250" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s_rays" value="ray_plane_intersect&#10;GT 코너 레이 → P4&#10;(사이드 depth 결손 복원)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="895" y="238" width="250" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s_rmat" value="R_from_plane_corners&#10;평면 법선 + 코너&#10;→ R, t, size, kpts3d" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="1170" y="238" width="250" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pose" value="ObjectPose&#10;R · t · size · kpts3d · rmse · valid" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C5E1A5;strokeColor=#558B2F;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1170" y="328" width="250" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- ====================== DATASET / LOADER ====================== -->
+        <mxCell id="cache" value="pose_labels/*.npz  (캐시)&#10;build_labels.py --mode face" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="458" width="240" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="usecache" value="use_cache?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FB8C00;" vertex="1" parent="1">
+          <mxGeometry x="390" y="458" width="120" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="dataset" value="PoseDataset&#10;letterbox(img + depth)&#10;GT R/t/size · rmse_thresh 필터" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="580" y="450" width="320" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="loader" value="collate_fn + DataLoader&#10;batch · shuffle · pin_memory" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="960" y="458" width="260" height="54" as="geometry" />
+        </mxCell>
+
+        <!-- ====================== TRAINING ====================== -->
+        <mxCell id="train_py" value="train.py  (일반 학습)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FB8C00;" vertex="1" parent="1">
+          <mxGeometry x="80" y="625" width="230" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="distill_py" value="train_distill.py  (DINOv3 증류)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FB8C00;" vertex="1" parent="1">
+          <mxGeometry x="80" y="700" width="230" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="model" value="YOLO6DoF&#10;Backbone (YOLOv11)&#10;→ PANNeck&#10;→ Pose6DoFHead : box/dfl · cls · rot(6d) · size&#10;+ DepthHead (dense depth)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="380" y="615" width="380" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="teacher" value="Teacher DINOv3 (frozen) + FeatureProjector&#10;[ train_distill 전용 ]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#BDBDBD;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="380" y="785" width="380" height="54" as="geometry" />
+        </mxCell>
+
+        <mxCell id="loss" value="Pose6DoFLoss&#10;TaskAlignedAssigner →&#10;box · dfl · obj · cls · rot · size · depth · trans" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="820" y="615" width="340" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="optim" value="AdamW + cosine LR (+warmup)&#10;AMP · clip_grad_norm" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="820" y="755" width="340" height="54" as="geometry" />
+        </mxCell>
+
+        <mxCell id="reporter" value="EpochReporter → train.out/&#10;&#10;best.pt · last.pt&#10;epoch_NNN/model.pt&#10;curves.png · history.json&#10;val_viz/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCC80;strokeColor=#EF6C00;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="615" width="270" height="194" as="geometry" />
+        </mxCell>
+
+        <!-- ====================== INFERENCE ====================== -->
+        <mxCell id="ckpt" value="predict.ckpt&#10;(best.pt)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#8E24AA;" vertex="1" parent="1">
+          <mxGeometry x="80" y="975" width="210" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="predictor" value="YOLO6DoFPredictor&#10;_preprocess → forward → _postprocess&#10;top-k 프리필터 + NMS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="350" y="953" width="330" height="86" as="geometry" />
+        </mxCell>
+        <mxCell id="decode" value="decode_pose(K, depth)&#10;→ R, t, size" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="730" y="965" width="230" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="render" value="render / eval (infer.py)&#10;val_viz · metrics (rot° · t mm)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="940" width="270" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="publish" value="PosePublisher&#10;→ JSONL (quaternion + t)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#90A4AE;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="1010" width="270" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ====================== EDGES : GT chain ====================== -->
+        <mxCell id="e_lbl_parse" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="in_lbl" target="parse"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_parse_border" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=0;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="1" source="parse" target="s_border">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="195" y="179" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_border_unproj" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="s_border" target="s_unproj"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_unproj_plane" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="s_unproj" target="s_plane"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_plane_rays" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="s_plane" target="s_rays"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_rays_rmat" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="s_rays" target="s_rmat"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_rmat_pose" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="s_rmat" target="pose"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_depth" value="depth" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#1E88E5;dashed=1;fontSize=10;exitX=0.4;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="in_depth" target="s_unproj">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="404" y="225" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_ini" value="K" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#1E88E5;dashed=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="in_ini" target="s_plane">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="900" y="222" /><mxPoint x="745" y="222" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ====================== EDGES : GT → dataset (밴드 사이 거터 라우팅) ====================== -->
+        <mxCell id="e_pose_uc" value="on-the-fly (use_cache=false)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;fontSize=10;exitX=0.4;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="pose" target="usecache">
+          <mxGeometry relative="1" x="-0.4" as="geometry"><Array as="points"><mxPoint x="1270" y="398" /><mxPoint x="450" y="398" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_pose_cache" value="build_labels --mode face" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;dashed=1;fontSize=10;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="pose" target="cache">
+          <mxGeometry relative="1" x="0.4" as="geometry"><Array as="points"><mxPoint x="1230" y="410" /><mxPoint x="200" y="410" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_cache_uc" value="use_cache=true" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="cache" target="usecache"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_uc_ds" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="usecache" target="dataset"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_rgb_ds" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#1E88E5;dashed=1;exitX=0;exitY=0.5;entryX=0.05;entryY=1;" edge="1" parent="1" source="in_rgb" target="dataset">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="55" y="105" /><mxPoint x="55" y="530" /><mxPoint x="595" y="530" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_ds_loader" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="dataset" target="loader"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- ====================== EDGES : loader → 학습 (top 거터) ====================== -->
+        <mxCell id="e_loader_t1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=0.2;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="loader" target="train_py">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1010" y="598" /><mxPoint x="195" y="598" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_loader_t2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=0.35;exitY=1;entryX=0;entryY=0.5;" edge="1" parent="1" source="loader" target="distill_py">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1050" y="585" /><mxPoint x="55" y="585" /><mxPoint x="55" y="722" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ====================== EDGES : 학습 내부 ====================== -->
+        <mxCell id="e_t1_model" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.3;" edge="1" parent="1" source="train_py" target="model"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_t2_model" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.7;" edge="1" parent="1" source="distill_py" target="model"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_t2_teacher" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#BDBDBD;dashed=1;exitX=0.5;exitY=1;entryX=0.1;entryY=0;" edge="1" parent="1" source="distill_py" target="teacher">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="195" y="772" /><mxPoint x="418" y="772" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_model_loss" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.35;entryX=0;entryY=0.35;" edge="1" parent="1" source="model" target="loss"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_teacher_loss" value="distill loss (cosine/mse)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#BDBDBD;dashed=1;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.75;" edge="1" parent="1" source="teacher" target="loss">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="790" y="812" /><mxPoint x="790" y="697" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_loss_optim" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="loss" target="optim"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_optim_model" value="update" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF6C00;dashed=1;fontSize=10;exitX=0;exitY=0.5;entryX=0.9;entryY=1;" edge="1" parent="1" source="optim" target="model">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="722" y="782" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_loss_rep" value="val best" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="loss" target="reporter"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- ====================== EDGES : 학습 → 추론 ====================== -->
+        <mxCell id="e_rep_ckpt" value="best.pt" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#8E24AA;dashed=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="reporter" target="ckpt">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1345" y="882" /><mxPoint x="185" y="882" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e_ckpt_pred" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="ckpt" target="predictor"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_pred_dec" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="predictor" target="decode"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_dec_render" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="decode" target="render"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_dec_pub" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#546E7A;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="decode" target="publish"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,12 +1,51 @@
-checkpoints
-wandb
-outputs
-__pycache__
-*.log
-*.ckpt
-*.pth
+# ============================================================
+#  navidet — 학습/추론 산출물·캐시는 추적하지 않는다 (코드/설정만 git 관리).
+# ============================================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.ipynb_checkpoints/
+
+# --- 가상환경 ---
+.venv/
+venv/
+env/
+
+# --- 모델 체크포인트 / export ---
 *.pt
-*.h5
-*.json
-*.csv
-*.zip
+*.pth
+*.onnx
+*.engine
+*.trt
+*.ckpt
+checkpoints/
+
+# --- 학습 출력 (runs/<exp>/best.pt, history.json, curves.png, val_viz ...) ---
+runs/
+
+# --- 추론/시각화 결과 ---
+_pred/
+_viz/
+# 루트에 떨어지는 스크래치 결과 이미지 (_cmp_*, _gt_*, _zoom_*, _ult_* 등)
+/_*.png
+/_*.jpg
+/_*.jpeg
+
+# --- 데이터셋 GT 캐시 (build_labels가 굽는 npz) ---
+pose_labels/
+**/pose_labels/
+
+# --- 발행 결과 / 로그 ---
+*.jsonl
+*.log
+
+# --- OS / 에디터 ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

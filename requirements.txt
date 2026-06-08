@@ -1,0 +1,14 @@
+# YOLO6DoF 실행에 필요한 패키지
+# 외부 의존성은 PyTorch 하나뿐입니다 (그 외에는 모두 Python 표준 라이브러리).
+#
+# 설치:
+#   pip install -r requirements.txt
+#
+# GPU(CUDA)용 빌드를 쓰려면 아래처럼 인덱스를 지정하세요 (예: CUDA 12.8):
+#   pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cu128
+# 현재 환경은 torch 2.9.1+cu128 에서 검증되었습니다.
+
+numpy==1.26.3
+pillow>=9.0      # 데이터 로딩(이미지/depth PNG)
+matplotlib>=3.5  # 학습 곡선 plot
+pyyaml>=5.4      # config(yaml) 로딩

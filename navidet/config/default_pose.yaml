@@ -1,0 +1,68 @@
+# ============================================================
+#  navidet 2D 멀티태스크(pose) 설정 — 이 파일만 수정하면 학습/추론을 제어한다.
+#  CLI override 예: --set train.epochs=50 data.imgsz=512
+#  6DoF 학습은 config/default_6dof.yaml 사용.
+# ============================================================
+
+data:
+  train_root: "/media/otter/otterHD/mando_aug/train"
+  val_root:   "/media/otter/otterHD/mando_aug/valid"
+  ini:        "/media/otter/otterHD/mando_aug/CameraParam_Orbbec Femto BoltCL8855300X5_Color1920x1080_Depth640x576.ini"
+  depth_scale: 0.001          # depth PNG(uint16) → meter (mm이면 0.001)
+  rmse_thresh: 0.05           # RANSAC 잔차 > 이 값(m)인 객체는 학습 제외
+  imgsz: 640                  # 입력 해상도 (얇은 박스라 640 이상 권장)
+  pose_mode: full             # GT 생성: full(팔레트 전면) | bottom(cart 등 세로 구조)
+  nc: 3                       # 클래스 수
+  class_names: [wood, plastic, multi]
+
+model:
+  scale: s                    # n/s/m/l/x
+  task: pose                  # detect | segment | pose  (하나만 골라 따로 학습)
+  nm: 32                      # segment: 마스크 프로토타입 수
+  kpt_shape: [4, 3]           # pose: [키포인트 수, 차원(2=xy / 3=xy+vis)]
+
+train:
+  epochs: 100
+  batch: 8
+  lr: 5.0e-4
+  weight_decay: 5.0e-4
+  workers: 4
+  amp: true                   # mixed precision
+  limit: 0                    # 디버그용 프레임 제한 (0=전체)
+  out: runs/exp_distill
+  save_interval: 10           # 몇 epoch마다 체크포인트/곡선 저장 (best는 항상, 마지막은 항상)
+  val_viz_num: 4              # 매 epoch 검증 시각화할 고정 샘플 수 (0=끔)
+
+# 손실 가중치 (MultiTaskLoss)
+loss:
+  box: 7.5
+  dfl: 1.5
+  cls: 0.5
+  seg: 2.5                     # segment task용 (pose만이면 미사용)
+  kpt: 12.0                   # keypoint 회귀
+  vis: 1.0                    # keypoint visibility (kpt_dim=3)
+
+# 지식 증류 (DINOv3 → Student)
+distill:
+  teacher_ckpt: ""            # 미세조정된 DINOv3 가중치(.pth). 비우면 MockDINOv3(스모크)
+  hub_name: dinov3_vits16     # torch.hub 모델명 (ckpt 지정 시)
+  teacher_dim: 384            # DINOv3 임베딩 차원 (ViT-S=384, B=768, L=1024)
+  patch_size: 16              # DINOv3 patch 크기
+  num_register_tokens: 4      # 레지스터 토큰 수 (DINOv3=4, +CLS 1)
+  teacher_imgsz: 640          # teacher 입력 크기 (patch_size 배수)
+  loss: cosine                # 증류 손실: cosine | mse
+  align: teacher              # 특징 grid 정렬 기준: teacher | student
+  alpha0: 1.0                 # 초기 distill 비중 (→ 0 으로 감소)
+  beta0: 0.3                  # 초기 task 비중
+  beta1: 1.0                  # 후반 task 비중 (→ 증가)
+  sched: cosine               # α 스케줄: cosine | linear
+
+# 추론/시각화
+predict:
+  ckpt: runs/exp_s/best.pt
+  conf: 0.25                  # confidence 임계값
+  iou: 0.5                    # NMS IoU 임계값
+  num: 12                     # 시각화할 프레임 수
+  out: _pred
+  seed: 0
+  publish_json: true          # 결과를 _pred/preds.jsonl 로 발행
