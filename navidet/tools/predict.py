@@ -41,8 +41,10 @@ def render_pose_sample(model, sample, names, conf=0.25, iou=0.5):
     cls_score, cls_id = scores.max(0)                # [A]
     keep_conf = cls_score > conf
     xyxy = xywh2xyxy(boxes)
-    nk, D = model.kpt_shape
-    kpt = dec["kpt"][0].view(nk, D, -1).permute(2, 0, 1)  # [A,nk,D] (px, +vis)
+    has_kpt = "kpt" in dec and getattr(model, "kpt_shape", None)
+    if has_kpt:
+        nk, D = model.kpt_shape
+        kpt = dec["kpt"][0].view(nk, D, -1).permute(2, 0, 1)  # [A,nk,D] (px, +vis)
 
     # uint8 이미지 복원
     img = (sample["img"].permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
@@ -58,12 +60,39 @@ def render_pose_sample(model, sample, names, conf=0.25, iou=0.5):
             draw.rectangle([x1, y1, x2, y2], outline=c, width=2)
             nm = names[int(cls_id[i])] if int(cls_id[i]) < len(names) else str(int(cls_id[i]))
             draw.text((x1, max(0, y1 - 10)), f"{nm} {cls_score[i]:.2f}", fill=c)
-            for k in range(nk):
-                kx, ky = kpt[i, k, 0].item(), kpt[i, k, 1].item()
-                v = kpt[i, k, 2].item() if D == 3 else 1.0
+            if has_kpt:
+                for k in range(nk):
+                    kx, ky = kpt[i, k, 0].item(), kpt[i, k, 1].item()
+                    v = kpt[i, k, 2].item() if D == 3 else 1.0
+                    if v > 0.3:
+                        draw.ellipse([kx - 3, ky - 3, kx + 3, ky + 3], fill=c)
+    return pil, int(idx.numel())
+
+
+def render_pose_gt(sample, names) -> Image.Image:
+    """모델 없이 2D pose GT(박스+키포인트)만 그린 PIL 이미지. (한 번만 저장용)
+
+    sample: PoseDataset(2D)["gt_bboxes"=xyxy px, "gt_kpts"=[N,nk,D] px(+vis)].
+    """
+    img = (sample["img"].permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
+    pil = Image.fromarray(img); draw = ImageDraw.Draw(pil)
+    boxes = sample["gt_bboxes"]
+    labels = sample["gt_labels"]
+    kpts = sample.get("gt_kpts")                      # detect/segment는 없음
+    for i in range(boxes.shape[0]):
+        ci = int(labels[i, 0])
+        c = _PALETTE[ci % len(_PALETTE)]
+        x1, y1, x2, y2 = boxes[i].tolist()
+        draw.rectangle([x1, y1, x2, y2], outline=c, width=2)
+        nm = names[ci] if ci < len(names) else str(ci)
+        draw.text((x1, max(0, y1 - 10)), nm, fill=c)
+        if kpts is not None:
+            for k in range(kpts.shape[1]):
+                kx, ky = kpts[i, k, 0].item(), kpts[i, k, 1].item()
+                v = kpts[i, k, 2].item() if kpts.shape[2] == 3 else 1.0
                 if v > 0.3:
                     draw.ellipse([kx - 3, ky - 3, kx + 3, ky + 3], fill=c)
-    return pil, int(idx.numel())
+    return pil
 
 
 @torch.no_grad()

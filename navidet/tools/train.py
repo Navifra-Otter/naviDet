@@ -37,11 +37,30 @@ def move_targets(targets, device):
     return {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in targets.items()}
 
 
+def resolve_device_ids(gpus):
+    """config train.gpus → 사용할 CUDA device id 리스트.
+
+      "auto"/"all"/None → 보이는 모든 GPU,  정수 n → 앞쪽 n개,  리스트 → 그대로.
+      CUDA 미가용 시 빈 리스트(=CPU).
+    """
+    if not torch.cuda.is_available():
+        return []
+    n = torch.cuda.device_count()
+    if gpus in (None, "auto", "all"):
+        return list(range(n))
+    if isinstance(gpus, int):
+        return list(range(min(max(gpus, 1), n)))
+    if isinstance(gpus, (list, tuple)):
+        return [int(g) for g in gpus if 0 <= int(g) < n]
+    return list(range(n))
+
+
 def run_epoch(model, loss_fn, loader, device, optimizer=None, scaler=None, amp=False,
               epoch=0, total_epochs=1, task="6dof"):
     train = optimizer is not None
     model.train(train)
-    model.head.return_raw = not train          # eval에서도 loss용 raw dict
+    core = model.module if isinstance(model, torch.nn.DataParallel) else model
+    core.head.return_raw = not train           # eval에서도 loss용 raw dict
     keys = LOSS_KEYS.get(task, LOSS_KEYS["pose"])
     agg = {k: 0.0 for k in keys}
     n = n_skip = 0
@@ -94,13 +113,17 @@ def main():
     task = m.get("task", "6dof")
     is_2d = task in TASK_PRESET            # detect/segment/pose
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_ids = resolve_device_ids(tr_cfg.get("gpus", "auto"))
+    device = torch.device(f"cuda:{device_ids[0]}") if device_ids else torch.device("cpu")
     os.makedirs(tr_cfg.out, exist_ok=True)
 
     # 최종(override 반영된) config를 화면 표시 + runs 폴더에 복사 저장
     cfg_dump = yaml.safe_dump(cfg.to_dict(), allow_unicode=True, sort_keys=False)
     print("=" * 60)
-    print(f"device : {device}")
+    if len(device_ids) > 1:
+        print(f"device : multi-GPU DataParallel {device_ids} (primary {device})")
+    else:
+        print(f"device : {device}")
     print(f"config (saved to {tr_cfg.out}/config.yaml):")
     print("-" * 60)
     print(cfg_dump.rstrip())
@@ -154,6 +177,12 @@ def main():
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     scaler = torch.amp.GradScaler(enabled=tr_cfg.amp and device.type == "cuda")
 
+    # 멀티 GPU: forward만 DataParallel로 분산(배치를 GPU 수만큼 분할).
+    # reporter/시각화/checkpoint는 원본 model(=core)을 그대로 사용한다.
+    train_model = model
+    if len(device_ids) > 1:
+        train_model = torch.nn.DataParallel(model, device_ids=device_ids)
+
     reporter = EpochReporter(tr_cfg.out, tr_cfg.epochs, tr_cfg.save_interval,
                              val_ds=val_ds, viz_idx=viz_idx, class_names=list(d.class_names),
                              conf=cfg.predict.conf, iou=cfg.predict.iou, task=task,
@@ -164,7 +193,7 @@ def main():
     best = float("inf")
     for ep in range(tr_cfg.epochs):
         lr_now = optimizer.param_groups[0]["lr"]
-        tr = run_epoch(model, loss_fn, train_loader, device, optimizer,
+        tr = run_epoch(train_model, loss_fn, train_loader, device, optimizer,
                        scaler if tr_cfg.amp else None, amp=tr_cfg.amp,
                        epoch=ep, total_epochs=tr_cfg.epochs, task=task)
         scheduler.step()

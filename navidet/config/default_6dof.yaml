@@ -29,6 +29,7 @@ model:
 train:
   epochs: 100
   batch: 8
+  gpus: auto                  # 멀티 GPU: auto(전체) | 개수(예: 2) | id목록(예: [0,1]) — batch가 GPU 수로 분할됨
   lr: 1.0e-3
   weight_decay: 5.0e-4
   workers: 4

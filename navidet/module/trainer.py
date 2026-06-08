@@ -20,6 +20,7 @@ import torch
 
 from .infer import render_gt, render_sample
 from .metrics import evaluate_pose, format_metrics
+from ..tools.predict import render_pose_gt, render_pose_sample
 from ..utils.visualize import plot_history
 
 
@@ -102,24 +103,33 @@ class EpochReporter:
                 plot_history(self.history, os.path.join(self.out, "curves.png"))
             except Exception as e:
                 print(f"  [warn] plot 실패: {e}")
-            if self.viz_idx and self.task == "6dof":            # 6DoF 전용 시각화
+            if self.viz_idx:                                    # task별 검증 시각화
+                is_6dof = self.task == "6dof"
                 gt_dir = os.path.join(self.out, "val_viz_gt")
                 if not os.path.isdir(gt_dir):                       # GT는 1회만
                     os.makedirs(gt_dir, exist_ok=True)
                     for i in self.viz_idx:
                         s = self.val_ds[i]
-                        render_gt(s, self.names).save(os.path.join(gt_dir, f"{s['stem']}.png"))
+                        gt = (render_gt(s, self.names) if is_6dof
+                              else render_pose_gt(s, self.names))
+                        gt.save(os.path.join(gt_dir, f"{s['stem']}.png"))
                 vdir = os.path.join(ep_dir, "val_viz")             # 추론 결과만
                 os.makedirs(vdir, exist_ok=True)
                 for i in self.viz_idx:
                     s = self.val_ds[i]
-                    pil, _ = render_sample(model, s, self.names, draw_gt=False,
-                                           conf=self.viz_conf, iou=self.iou)
+                    if is_6dof:
+                        pil, _ = render_sample(model, s, self.names, draw_gt=False,
+                                               conf=self.viz_conf, iou=self.iou)
+                    else:
+                        pil, _ = render_pose_sample(model, s, self.names,
+                                                    conf=self.viz_conf, iou=self.iou)
                     pil.save(os.path.join(vdir, f"{s['stem']}.png"))
             print(f"  saved: {ep_dir}/model.pt" + (f" + val_viz({len(self.viz_idx)})" if self.viz_idx else ""))
 
         # best (pose 종합점수, 없으면 train total)
         if score < self.best:
+            prev = self.best
             self.best = score
             torch.save(make_ckpt(), os.path.join(self.out, "best.pt"))
+            print(f"  ★ best 갱신: {prev:.4f} → {score:.4f}  saved: {self.out}/best.pt")
         return self.best

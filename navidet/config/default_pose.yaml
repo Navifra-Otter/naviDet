@@ -24,12 +24,13 @@ model:
 train:
   epochs: 100
   batch: 8
+  gpus: auto                  # 멀티 GPU: auto(전체) | 개수(예: 2) | id목록(예: [0,1]) — batch가 GPU 수로 분할됨
   lr: 5.0e-4
   weight_decay: 5.0e-4
   workers: 4
   amp: true                   # mixed precision
   limit: 0                    # 디버그용 프레임 제한 (0=전체)
-  out: runs/exp_distill
+  out: runs/pose
   save_interval: 10           # 몇 epoch마다 체크포인트/곡선 저장 (best는 항상, 마지막은 항상)
   val_viz_num: 4              # 매 epoch 검증 시각화할 고정 샘플 수 (0=끔)
 
@@ -59,7 +60,7 @@ distill:
 
 # 추론/시각화
 predict:
-  ckpt: runs/exp_s/best.pt
+  ckpt: runs/pose/best.pt
   conf: 0.25                  # confidence 임계값 (실제 추론)
   viz_conf: 0.05              # 학습 중 val_viz 전용 임계값 (현재 pose는 미사용, 6dof 전용)
   iou: 0.5                    # NMS IoU 임계값
