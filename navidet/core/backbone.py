@@ -1,112 +1,86 @@
 """
-CSP 기반 백본 + PAN 넥.
+멀티스케일 백본 + FPN 넥 (퍼미시브 라이선스 구성요소).
 
-P3/P4/P5 세 스케일의 멀티스케일 특징을 반환하여, 작은~큰 객체를 모두 커버하도록
-한다. 6DoF Head는 이 3개 스케일 각각에 대해 예측을 수행한다.
+  · Backbone : timm(Apache-2.0) 백본을 features_only 모드로 사용해 P3/P4/P5
+               (stride 8/16/32) 특징을 추출. 사전학습 가중치를 그대로 활용한다.
+  · FPNNeck  : torchvision(BSD)의 FeaturePyramidNetwork 로 세 스케일을 융합,
+               균일 채널(기본 256)의 (N3, N4, N5) 를 반환.
 
-채널 폭(width)과 깊이(depth)는 scale 인자로 조절한다 (n/s/m/l/x 대응).
-여기서는 Edge PC를 가정해 'n'(nano) 기본값을 사용한다.
+두 구성요소 모두 외부 퍼미시브 라이브러리에 기반하므로, 검출 헤드(별도 구현)와
+함께 쓰면 AGPL 의존 없이 멀티스케일 검출 백본을 구성할 수 있다.
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
+
+import timm
 import torch
 import torch.nn as nn
+from torchvision.ops import FeaturePyramidNetwork
 
-from .blocks import PSALayer, CSPLayer, Conv, SPPF
-
-
-# (depth_mult, width_mult, max_channels) — scale별 폭/깊이 배율 (n/s/m/l/x)
-CSP_SCALES = {
-    "n": (0.50, 0.25, 1024),
-    "s": (0.50, 0.50, 1024),
-    "m": (0.50, 1.00, 512),
-    "l": (1.00, 1.00, 512),
-    "x": (1.00, 1.50, 512),
+# scale(n/s/m/l/x) → timm 백본 이름. Edge PC 실시간 추론을 가정해 경량 위주로 매핑.
+# (timm 의 어떤 모델이든 features_only 를 지원하면 교체 가능.)
+SCALE_BACKBONE = {
+    "n": "mobilenetv3_small_100",
+    "s": "mobilenetv3_large_100",
+    "m": "efficientnet_b0",
+    "l": "convnext_nano",
+    "x": "convnext_tiny",
 }
 
 
-def _round_ch(c: int, width: float, max_c: int, divisor: int = 8) -> int:
-    c = min(int(c * width), max_c)
-    return max(divisor, int(c + divisor / 2) // divisor * divisor)
+def _make_features(name: str, in_ch: int, pretrained: bool):
+    """timm features_only 모델 생성. 사전학습 다운로드 실패 시 랜덤 초기화로 폴백."""
+    try:
+        return timm.create_model(name, features_only=True, pretrained=pretrained,
+                                 in_chans=in_ch)
+    except Exception as e:                              # 오프라인/다운로드 차단 등
+        if pretrained:
+            print(f"[backbone] '{name}' 사전학습 로드 실패({type(e).__name__}) "
+                  f"→ pretrained=False 로 폴백")
+            return timm.create_model(name, features_only=True, pretrained=False,
+                                     in_chans=in_ch)
+        raise
 
 
-def _round_depth(n: int, depth: float) -> int:
-    return max(1, round(n * depth))
+class Backbone(nn.Module):
+    """timm 멀티스케일 백본. forward(img) → (P3, P4, P5).
 
-
-class CSPBackbone(nn.Module):
+    stride 8/16/32 에 해당하는 특징 단계를 reduction 으로 자동 선택하므로,
+    스테이지 구성이 다른 백본 계열(MobileNet/EfficientNet/ConvNeXt/ResNet ...)에도
+    동일하게 동작한다.
     """
-    P1~P5 다운샘플 백본. 출력으로 P3(/8), P4(/16), P5(/32) 특징을 반환.
-    """
 
-    def __init__(self, scale: str = "n", in_ch: int = 3):
+    def __init__(self, scale: str = "n", in_ch: int = 3, pretrained: bool = True,
+                 name: str | None = None):
         super().__init__()
-        d, w, mc = CSP_SCALES[scale]
-        ch = [_round_ch(c, w, mc) for c in (64, 128, 256, 512, 1024)]
-        self.out_channels = (ch[2], ch[3], ch[4])  # (P3, P4, P5)
+        name = name or SCALE_BACKBONE.get(scale, SCALE_BACKBONE["s"])
+        self.model = _make_features(name, in_ch, pretrained)
+        red = list(self.model.feature_info.reduction())
+        chs = list(self.model.feature_info.channels())
+        # stride 8/16/32 단계의 인덱스를 선택 (P3/P4/P5)
+        self.sel = [red.index(r) for r in (8, 16, 32)]
+        self.out_channels = tuple(chs[i] for i in self.sel)
+        self.name = name
 
-        # stem + 다운샘플 스테이지들
-        self.stem = Conv(in_ch, ch[0], 3, 2)                       # /2
-        self.dark2 = nn.Sequential(
-            Conv(ch[0], ch[1], 3, 2),                              # /4
-            CSPLayer(ch[1], ch[1], _round_depth(2, d), c3k=False),
-        )
-        self.dark3 = nn.Sequential(
-            Conv(ch[1], ch[2], 3, 2),                              # /8  -> P3
-            CSPLayer(ch[2], ch[2], _round_depth(2, d), c3k=False),
-        )
-        self.dark4 = nn.Sequential(
-            Conv(ch[2], ch[3], 3, 2),                              # /16 -> P4
-            CSPLayer(ch[3], ch[3], _round_depth(2, d), c3k=True),
-        )
-        self.dark5 = nn.Sequential(
-            Conv(ch[3], ch[4], 3, 2),                              # /32 -> P5
-            CSPLayer(ch[4], ch[4], _round_depth(2, d), c3k=True),
-            SPPF(ch[4], ch[4], 5),
-            PSALayer(ch[4], ch[4], _round_depth(2, d)),
-        )
-
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # x: [B, 3, H, W]
-        x = self.stem(x)            # [B, ch0, H/2,  W/2]
-        x = self.dark2(x)           # [B, ch1, H/4,  W/4]
-        p3 = self.dark3(x)          # [B, ch2, H/8,  W/8]
-        p4 = self.dark4(p3)         # [B, ch3, H/16, W/16]
-        p5 = self.dark5(p4)         # [B, ch4, H/32, W/32]
-        return p3, p4, p5
+    def forward(self, x: torch.Tensor):
+        feats = self.model(x)
+        return tuple(feats[i] for i in self.sel)
 
 
-class PANNeck(nn.Module):
-    """
-    PAN 넥: top-down(업샘플) + bottom-up(다운샘플) 경로로 멀티스케일
-    특징을 융합. 입력/출력 모두 (P3, P4, P5).
+class FPNNeck(nn.Module):
+    """torchvision FeaturePyramidNetwork 기반 넥. (P3,P4,P5) → (N3,N4,N5).
+
+    세 스케일을 top-down 경로로 융합하고 모든 레벨을 균일 채널(out_ch)로 맞춘다.
     """
 
-    def __init__(self, ch: tuple[int, int, int], scale: str = "n"):
+    def __init__(self, in_channels, out_ch: int = 256):
         super().__init__()
-        d, _, _ = CSP_SCALES[scale]
-        c3, c4, c5 = ch
-        self.up = nn.Upsample(scale_factor=2, mode="nearest")
+        self.fpn = FeaturePyramidNetwork(list(in_channels), out_ch)
+        self.out_channels = (out_ch, out_ch, out_ch)
 
-        # top-down (별도 reduce 없이 concat 후 CSPLayer가 채널 정리)
-        self.td_p4 = CSPLayer(c5 + c4, c4, _round_depth(2, d), c3k=False)
-        self.td_p3 = CSPLayer(c4 + c3, c3, _round_depth(2, d), c3k=False)
-
-        # bottom-up
-        self.down_p3 = Conv(c3, c3, 3, 2)
-        self.bu_p4 = CSPLayer(c3 + c4, c4, _round_depth(2, d), c3k=False)
-        self.down_p4 = Conv(c4, c4, 3, 2)
-        self.bu_p5 = CSPLayer(c4 + c5, c5, _round_depth(2, d), c3k=True)
-
-        self.out_channels = (c3, c4, c5)
-
-    def forward(self, feats: tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
-        p3, p4, p5 = feats
-        # --- top-down ---
-        p4_td = self.td_p4(torch.cat([self.up(p5), p4], 1))        # [B, c4, H/16, W/16]
-        n3 = self.td_p3(torch.cat([self.up(p4_td), p3], 1))        # [B, c3, H/8,  W/8]  -> N3
-        # --- bottom-up ---
-        n4 = self.bu_p4(torch.cat([self.down_p3(n3), p4_td], 1))   # [B, c4, H/16, W/16] -> N4
-        n5 = self.bu_p5(torch.cat([self.down_p4(n4), p5], 1))      # [B, c5, H/32, W/32] -> N5
-        return n3, n4, n5
+    def forward(self, feats):
+        x = OrderedDict((str(i), f) for i, f in enumerate(feats))
+        out = self.fpn(x)
+        return tuple(out.values())

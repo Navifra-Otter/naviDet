@@ -27,7 +27,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from .backbone import PANNeck, CSPBackbone
+from .backbone import Backbone, FPNNeck
 from ..utils.geometry import (quaternion_to_matrix, rotation_6d_to_matrix,
                        sample_depth, unproject_translation)
 from .head import DepthHead, MultiTaskHead, Pose6DoFHead
@@ -48,8 +48,8 @@ class Det6DoF(nn.Module):
                  strides: tuple[int, ...] = (8, 16, 32), rot_repr: str = "6d",
                  light_head: bool = True):
         super().__init__()
-        self.backbone = CSPBackbone(scale=scale)
-        self.neck = PANNeck(self.backbone.out_channels, scale=scale)
+        self.backbone = Backbone(scale=scale)
+        self.neck = FPNNeck(self.backbone.out_channels)
         self.head = Pose6DoFHead(
             nc=nc, ch=self.neck.out_channels, reg_max=reg_max,
             strides=strides, rot_repr=rot_repr, light=light_head,
@@ -117,8 +117,8 @@ class MultiTaskDet(nn.Module):
                  tasks=("detect", "segment", "pose"), nm: int = 32,
                  kpt_shape=(4, 3)):
         super().__init__()
-        self.backbone = CSPBackbone(scale=scale)
-        self.neck = PANNeck(self.backbone.out_channels, scale=scale)
+        self.backbone = Backbone(scale=scale)
+        self.neck = FPNNeck(self.backbone.out_channels)
         self.head = MultiTaskHead(
             nc=nc, ch=self.neck.out_channels, reg_max=reg_max, strides=strides,
             tasks=tasks, nm=nm, kpt_shape=kpt_shape,
