@@ -34,6 +34,7 @@ from navidet.module.distill import (DINOv3Teacher, FeatureProjector, MockDINOv3,
 from navidet.module.loss import Pose6DoFLoss
 from navidet.module.loss_mt import MultiTaskLoss
 from navidet.module.trainer import EpochReporter, Progress
+from navidet.tools.train import resolve_device_ids
 from navidet.utils.config import load_config
 
 
@@ -76,15 +77,65 @@ def move_targets(t, device):
 
 
 # --------------------------------------------------------------------------- #
+#  멀티 GPU용 스텝 래퍼 — student forward+projector+teacher+손실을 한 forward로 묶어
+#  DataParallel이 배치를 GPU별로 분할/gather 할 수 있게 한다. (distill은 forward를
+#  서브모듈로 쪼개 호출하므로 모듈로 감싸지 않으면 DataParallel을 적용할 수 없다.)
+#  · 스칼라 손실은 [1] 형태로 반환 → gather가 GPU별 값을 [n_gpu]로 모음(0-dim 불가).
+#  · autocast를 forward 안에 둬 DataParallel worker 스레드에서도 적용되게 한다.
+# --------------------------------------------------------------------------- #
+class DistillStep(torch.nn.Module):
+    def __init__(self, student, projector, teacher, loss_fn, is_6dof, dc, amp):
+        super().__init__()
+        self.student = student
+        self.projector = projector
+        self.teacher = teacher
+        self.loss_fn = loss_fn
+        self.is_6dof = is_6dof
+        self.dc = dc
+        self.amp = amp
+
+    def forward(self, imgs, targets, alpha, beta):
+        with torch.autocast(device_type=imgs.device.type, enabled=self.amp):
+            # --- Student forward (서브모듈 직접 호출로 neck 특징 확보) ---
+            feats = self.student.backbone(imgs)
+            n3, n4, n5 = self.student.neck(feats)          # 'Neck / Feature Fusion' 출력
+            head_out = self.student.head((n3, n4, n5))     # train: raw dict
+            if self.is_6dof:
+                depth = self.student.depth_head(n3)        # Depth Head
+                out = {"det": head_out, "depth": depth}
+            else:
+                out = head_out                             # MultiTaskHead raw dict
+
+            # --- Task Loss ---
+            task_loss, items = self.loss_fn(out, targets)
+
+            # --- Distillation Loss ---
+            student_proj = self.projector(n3)              # [B, D, h, w]
+            with torch.no_grad():                          # Teacher: frozen, register 제거 patch맵
+                teacher_feat = self.teacher.extract_patch_tokens(imgs)
+            distill_loss = feature_distillation_loss(
+                student_proj.float(), teacher_feat.float(), self.dc.loss, self.dc.align)
+
+            total = alpha * distill_loss + beta * task_loss   # Decoupled total
+
+        # gather가 가능하도록 모든 스칼라를 [1]로. items(파이썬 float)도 텐서화.
+        ret = {"__loss__": total.reshape(1),
+               "distill": distill_loss.detach().reshape(1)}
+        for k, v in items.items():
+            ret[k] = torch.as_tensor(float(v), device=imgs.device).reshape(1)
+        return ret
+
+
+# --------------------------------------------------------------------------- #
 #  전체 학습 루프 (한 epoch)
 # --------------------------------------------------------------------------- #
-def train_one_epoch(student, projector, teacher, loss_fn, loader, optimizer,
-                    device, epoch, total_epochs, dc, scaler=None, amp=False,
-                    task="6dof"):
-    student.train()
-    projector.train()
-    teacher.eval()                                         # ★ Teacher는 항상 eval
-    is_6dof = task == "6dof"
+def train_one_epoch(step_module, loader, optimizer, device, epoch, total_epochs,
+                    dc, scaler=None, amp=False, task="6dof"):
+    step_module.train()
+    core = (step_module.module if isinstance(step_module, torch.nn.DataParallel)
+            else step_module)
+    core.teacher.eval()                                    # ★ Teacher는 항상 eval
+    clip_params = list(core.student.parameters()) + list(core.projector.parameters())
 
     # 4. Decoupled scheduler — epoch에 따른 α(distill) / β(task)
     alpha, beta = loss_weights(epoch, total_epochs, dc.alpha0, dc.beta0, dc.beta1, dc.sched)
@@ -99,31 +150,8 @@ def train_one_epoch(student, projector, teacher, loss_fn, loader, optimizer,
         imgs = imgs.to(device, non_blocking=True)
         targets = move_targets(targets, device)
 
-        with torch.autocast(device_type=device.type, enabled=amp):
-            # --- Student forward (서브모듈 직접 호출로 neck 특징 확보) ---
-            feats = student.backbone(imgs)
-            n3, n4, n5 = student.neck(feats)               # 'Neck / Feature Fusion' 출력
-            head_out = student.head((n3, n4, n5))          # train: raw dict
-            if is_6dof:
-                depth = student.depth_head(n3)             # Depth Head
-                out = {"det": head_out, "depth": depth}
-            else:
-                out = head_out                             # MultiTaskHead raw dict
-
-            # --- Task Loss ---
-            task_loss, items = loss_fn(out, targets)
-
-            # --- Distillation Loss ---
-            # 2. Projector: neck 특징(n3) → DINOv3 차원
-            student_proj = projector(n3)                   # [B, D, h, w]
-            # 1. Teacher: frozen, no_grad / 3. register 제거된 순수 patch 공간맵
-            with torch.no_grad():
-                teacher_feat = teacher.extract_patch_tokens(imgs)   # [B, D, Hp, Wp]
-            distill_loss = feature_distillation_loss(
-                student_proj.float(), teacher_feat.float(), dc.loss, dc.align)
-
-            # --- Decoupled total ---
-            total = alpha * distill_loss + beta * task_loss
+        ret = step_module(imgs, targets, alpha, beta)      # DataParallel이면 GPU별 분산
+        total = ret["__loss__"].mean()                     # GPU별 평균 손실 → 전체 평균
 
         optimizer.zero_grad(set_to_none=True)
         if not torch.isfinite(total):
@@ -131,19 +159,17 @@ def train_one_epoch(student, projector, teacher, loss_fn, loader, optimizer,
         if scaler is not None:
             scaler.scale(total).backward()
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(
-                list(student.parameters()) + list(projector.parameters()), 10.0)
+            torch.nn.utils.clip_grad_norm_(clip_params, 10.0)
             scaler.step(optimizer); scaler.update()
         else:
             total.backward()
-            torch.nn.utils.clip_grad_norm_(
-                list(student.parameters()) + list(projector.parameters()), 10.0)
+            torch.nn.utils.clip_grad_norm_(clip_params, 10.0)
             optimizer.step()
 
-        for k, v in items.items():                     # task 손실 항목 (total=task total)
-            if k in agg:
-                agg[k] += v
-        agg["distill"] += float(distill_loss.detach())
+        for k in agg:                                      # task 손실 항목 (total=task total)
+            if k in ret:
+                agg[k] += ret[k].mean().item()
+        agg["distill"] += ret["distill"].mean().item()
         n += 1
         prog.step(it, total=agg["total"] / n, distill=agg["distill"] / n)
     prog.close()
@@ -162,13 +188,18 @@ def main():
     task = m.get("task", "6dof")
     is_6dof = task == "6dof"
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_ids = resolve_device_ids(tr.get("gpus", "auto"))
+    device = torch.device(f"cuda:{device_ids[0]}") if device_ids else torch.device("cpu")
     os.makedirs(tr.out, exist_ok=True)
 
     # config 화면 표시 + runs 폴더에 복사 저장 (일반 학습과 동일)
     cfg_dump = yaml.safe_dump(cfg.to_dict(), allow_unicode=True, sort_keys=False)
     print("=" * 60)
-    print(f"device : {device}  (distill: teacher_dim={dc.teacher_dim})")
+    if len(device_ids) > 1:
+        print(f"device : multi-GPU DataParallel {device_ids} (primary {device})"
+              f"  (distill: teacher_dim={dc.teacher_dim})")
+    else:
+        print(f"device : {device}  (distill: teacher_dim={dc.teacher_dim})")
     print(f"config (saved to {tr.out}/config.yaml):")
     print("-" * 60)
     print(cfg_dump.rstrip())
@@ -216,6 +247,12 @@ def main():
         lr=tr.lr, weight_decay=tr.weight_decay)
     scaler = torch.amp.GradScaler(enabled=tr.amp and device.type == "cuda")
 
+    # 멀티 GPU: student+projector+teacher+손실을 한 모듈로 묶어 DataParallel로 분산.
+    # reporter/시각화/checkpoint는 원본 student를 그대로 쓴다.
+    step_module = DistillStep(student, projector, teacher, loss_fn, is_6dof, dc, tr.amp)
+    if len(device_ids) > 1:
+        step_module = torch.nn.DataParallel(step_module, device_ids=device_ids)
+
     # 일반 학습과 동일한 로깅·저장 (6DoF만 pose 지표/val_viz, 2D는 손실 곡선만)
     reporter = EpochReporter(tr.out, tr.epochs, tr.save_interval, val_ds=val_ds,
                              viz_idx=viz_idx, class_names=list(d.class_names),
@@ -227,10 +264,9 @@ def main():
     best = float("inf")
     for ep in range(tr.epochs):
         lr_now = optimizer.param_groups[0]["lr"]
-        stats, a, b = train_one_epoch(student, projector, teacher, loss_fn,
-                                      train_loader, optimizer, device, ep, tr.epochs,
-                                      dc, scaler if tr.amp else None, amp=tr.amp,
-                                      task=task)
+        stats, a, b = train_one_epoch(step_module, train_loader, optimizer, device,
+                                      ep, tr.epochs, dc, scaler if tr.amp else None,
+                                      amp=tr.amp, task=task)
         # distill 전용 정보(α/β/distill)는 prefix로, 나머지(손실·pose지표·저장)는 동일
         prefix = f"α={a:.3f} β={b:.3f} distill={stats['distill']:.4f} "
         make_ckpt = lambda e=ep: {"model": student.state_dict(),

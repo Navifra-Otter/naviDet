@@ -5,15 +5,18 @@
 # ============================================================
 
 data:
-  train_root: "/media/otter/otterHD/mando_aug/train"
-  val_root:   "/media/otter/otterHD/mando_aug/valid"
-  ini:        "/media/otter/otterHD/mando_aug/CameraParam_Orbbec Femto BoltCL8855300X5_Color1920x1080_Depth640x576.ini"
+  train_root: "/home/naviserver02/work/otter/EdgeCrafter/datasets/mando_aug_merge/train"
+  val_root:   "/home/naviserver02/work/otter/EdgeCrafter/datasets/mando_aug_merge/valid"
+  ini:        "/home/naviserver02/work/otter/EdgeCrafter/datasets/mando_aug_merge/CameraParam_Orbbec Femto BoltCL8855300X5_Color1920x1080_Depth640x576.ini"
+  # train_root: "/media/otter/otterHD/mando_aug/train"
+  # val_root:   "/media/otter/otterHD/mando_aug/valid"
+  # ini:        "/media/otter/otterHD/mando_aug/CameraParam_Orbbec Femto BoltCL8855300X5_Color1920x1080_Depth640x576.ini"
   depth_scale: 0.001          # depth PNG(uint16) → meter (mm이면 0.001)
   rmse_thresh: 0.05           # RANSAC 잔차 > 이 값(m)인 객체는 학습 제외
   imgsz: 640                  # 입력 해상도 (얇은 박스라 640 이상 권장)
   pose_mode: full             # GT 생성: full(팔레트 전면) | bottom(cart 등 세로 구조)
-  nc: 3                       # 클래스 수
-  class_names: [wood, plastic, multi]
+  nc: 1                       # 클래스 수
+  class_names: [cart]
 
 model:
   scale: s                    # n/s/m/l/x

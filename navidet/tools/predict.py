@@ -34,8 +34,14 @@ _PALETTE = [(0, 255, 255), (255, 128, 0), (255, 0, 255), (0, 255, 0),
 def render_pose_sample(model, sample, names, conf=0.25, iou=0.5):
     """pose 모델 추론 → 박스+키포인트 오버레이 PIL 이미지 반환."""
     device = next(model.parameters()).device
+    was_training = model.training                    # 학습 직후 호출돼도 디코딩 보장
+    model.eval()
+    prev_raw = model.head.return_raw
+    model.head.return_raw = False
     x = sample["img"].unsqueeze(0).to(device)
     dec = model(x)                                   # eval dict
+    model.head.return_raw = prev_raw
+    model.train(was_training)
     boxes = dec["boxes"][0].transpose(0, 1)          # [A,4] xywh px
     scores = dec["scores"][0]                        # [nc,A]
     cls_score, cls_id = scores.max(0)                # [A]

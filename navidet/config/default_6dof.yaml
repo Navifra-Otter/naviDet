@@ -4,12 +4,12 @@
 # ============================================================
 
 data:
-  train_root: "/media/otter/otterHD/mando_aug/train"
-  val_root:   "/media/otter/otterHD/mando_aug/valid"
-  ini:        "/media/otter/otterHD/mando_aug/CameraParam_Orbbec Femto BoltCL8855300X5_Color1920x1080_Depth640x576.ini"
-  # train_root: "/media/otter/otterHD/dataset/pallet_data/data_merge/6dof2/test/train"
-  # val_root:   "/media/otter/otterHD/dataset/pallet_data/data_merge/6dof2/test/valid"
-  # ini:        "/media/otter/otterHD/dataset/pallet_data/data_merge/6dof2/test/CameraParam_Orbbec Femto BoltCL8855300X5_Color1920x1080_Depth640x576.ini"
+  train_root: "/home/naviserver02/work/otter/EdgeCrafter/datasets/mando_aug_merge/train"
+  val_root:   "/home/naviserver02/work/otter/EdgeCrafter/datasets/mando_aug_merge/valid"
+  ini:        "/home/naviserver02/work/otter/EdgeCrafter/datasets/mando_aug_merge/CameraParam_Orbbec Femto BoltCL8855300X5_Color1920x1080_Depth640x576.ini"
+  # train_root: "/media/otter/otterHD/mando_aug/train"
+  # val_root:   "/media/otter/otterHD/mando_aug/valid"
+  # ini:        "/media/otter/otterHD/mando_aug/CameraParam_Orbbec Femto BoltCL8855300X5_Color1920x1080_Depth640x576.ini"
   depth_scale: 0.001          # depth PNG(uint16) → meter (mm이면 0.001)
   rmse_thresh: 0.05           # RANSAC 잔차 > 이 값(m)인 객체는 학습 제외
   imgsz: 640                  # 입력 해상도 (얇은 박스라 640 이상 권장)
@@ -18,8 +18,8 @@ data:
   use_cache: false            # pose_labels/*.npz 캐시 사용 여부. false면 매 epoch 즉석 GT
                               # (pose_mode 변경 직후엔 stale 캐시를 피하려 false 권장.
                               #  대량 학습 전엔 build_labels로 캐시를 굽고 true 로)
-  nc: 3                       # 클래스 수
-  class_names: [cart_white, cart_blue, cart_gray]
+  nc: 1                       # 클래스 수
+  class_names: [cart]
 
 model:
   scale: s                    # n/s/m/l/x
