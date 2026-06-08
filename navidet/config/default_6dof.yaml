@@ -52,9 +52,10 @@ loss:
 
 # 지식 증류 (DINOv3 → Student)
 distill:
-  teacher_ckpt: "checkpoints/dinov3/vit/dinov3_vits16_pretrain_lvd1689m-08c60483.pth"            # 미세조정된 DINOv3 가중치(.pth). 비우면 MockDINOv3(스모크)
-  hub_name: dinov3_vits16     # torch.hub 모델명 (ckpt 지정 시)
-  teacher_dim: 384            # DINOv3 임베딩 차원 (ViT-S=384, B=768, L=1024)
+  teacher_ckpt: "checkpoints/dinov3/vit/dinov3_vits16_pretrain_lvd1689m-08c60483.pth"  # DINOv3 가중치(.pth) 로컬 경로(자동 다운로드는 403). 비우면 MockDINOv3
+  repo_dir: ""                # 캐시된 DINOv3 레포 경로. 지정 시 source='local'로 GitHub 접근 생략(선택)
+  hub_name: dinov3_vits16     # torch.hub 모델명 (예: dinov3_vitb16). teacher_dim도 맞출 것
+  teacher_dim: 384            # DINOv3 임베딩 차원 (ViT-S=384, B=768, L=1024) — vitb16이면 768
   patch_size: 16              # DINOv3 patch 크기
   num_register_tokens: 4      # 레지스터 토큰 수 (DINOv3=4, +CLS 1)
   teacher_imgsz: 640          # teacher 입력 크기 (patch_size 배수)

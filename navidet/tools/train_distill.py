@@ -49,17 +49,27 @@ LOSS_KEYS = {
 #  1. Teacher 빌드 (frozen)
 # --------------------------------------------------------------------------- #
 def build_teacher(dc, device):
-    """미세조정된 DINOv3 로드. ckpt가 없으면 MockDINOv3로 대체(스모크)."""
+    """DINOv3 로드. teacher_ckpt가 없으면 MockDINOv3로 대체(스모크).
+
+    DINOv3 사전학습 가중치는 라이선스 게이트라 torch.hub의 자동 다운로드가
+    HTTP 403으로 막힌다. → Meta에서 미리 받은 .pth 경로를 teacher_ckpt로 주고
+    weights= 로 직접 넘겨 네트워크 접근 없이 로드한다.
+    repo_dir 를 지정하면 캐시된 로컬 레포(source='local')에서 빌드해 GitHub 접근도 건너뛴다.
+    """
     ckpt = dc.get("teacher_ckpt", "")
     if ckpt:
-        # 실제 DINOv3 로드 예시 (환경에 맞게 교체):
-        #   backbone = torch.hub.load('facebookresearch/dinov3', 'dinov3_vitb16')
-        #   backbone.load_state_dict(torch.load(ckpt))   # 태스크 미세조정 가중치
-        backbone = torch.hub.load("facebookresearch/dinov3",
-                                  dc.get("hub_name", "dinov3_vits16"))
-        state = torch.load(ckpt, map_location="cpu")
-        backbone.load_state_dict(state.get("model", state), strict=False)
-        print(f"[teacher] DINOv3 로드: {ckpt}")
+        if not os.path.isfile(ckpt):
+            raise FileNotFoundError(
+                f"[teacher] teacher_ckpt 파일 없음: {ckpt}\n"
+                "  DINOv3 가중치는 자동 다운로드가 막혀(403) 직접 받아야 합니다.\n"
+                "  https://github.com/facebookresearch/dinov3 에서 라이선스 동의 후\n"
+                f"  '{dc.get('hub_name', 'dinov3_vits16')}' 사전학습 .pth 를 받아 경로를 지정하세요.")
+        hub_name = dc.get("hub_name", "dinov3_vits16")
+        repo_dir = dc.get("repo_dir", "")            # 비우면 GitHub(캐시), 지정 시 로컬 레포
+        load_kw = dict(source="local") if repo_dir else {}
+        backbone = torch.hub.load(repo_dir or "facebookresearch/dinov3",
+                                  hub_name, weights=ckpt, **load_kw)
+        print(f"[teacher] DINOv3({hub_name}) 가중치 로드: {ckpt}")
     else:
         backbone = MockDINOv3(dc.teacher_dim, dc.patch_size, dc.num_register_tokens)
         print("[teacher] teacher_ckpt 미지정 → MockDINOv3 (스모크용)")
