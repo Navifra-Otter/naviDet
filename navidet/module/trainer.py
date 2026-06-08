@@ -50,7 +50,7 @@ class Progress:
 
 class EpochReporter:
     def __init__(self, out, total_epochs, save_interval, val_ds=None, viz_idx=None,
-                 class_names=None, conf=0.25, iou=0.5, task="6dof"):
+                 class_names=None, conf=0.25, iou=0.5, task="6dof", viz_conf=None):
         self.out = out
         self.total = total_epochs
         self.save_interval = save_interval
@@ -58,6 +58,9 @@ class EpochReporter:
         self.viz_idx = viz_idx or []
         self.names = list(class_names or [])
         self.conf, self.iou = conf, iou
+        # 시각화 전용 임계값: 정량평가(self.conf)와 분리 — 초기 epoch에도 약한 예측을 그려
+        # 학습 진행을 눈으로 확인할 수 있게 한다. 미지정 시 conf와 동일.
+        self.viz_conf = conf if viz_conf is None else viz_conf
         self.task = task                       # "6dof" → pose 지표 평가/시각화, 그 외 → 손실 로깅만
         self.history = []
         self.best = float("inf")
@@ -111,7 +114,7 @@ class EpochReporter:
                 for i in self.viz_idx:
                     s = self.val_ds[i]
                     pil, _ = render_sample(model, s, self.names, draw_gt=False,
-                                           conf=self.conf, iou=self.iou)
+                                           conf=self.viz_conf, iou=self.iou)
                     pil.save(os.path.join(vdir, f"{s['stem']}.png"))
             print(f"  saved: {ep_dir}/model.pt" + (f" + val_viz({len(self.viz_idx)})" if self.viz_idx else ""))
 

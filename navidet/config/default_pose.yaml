@@ -60,7 +60,8 @@ distill:
 # 추론/시각화
 predict:
   ckpt: runs/exp_s/best.pt
-  conf: 0.25                  # confidence 임계값
+  conf: 0.25                  # confidence 임계값 (실제 추론)
+  viz_conf: 0.05              # 학습 중 val_viz 전용 임계값 (현재 pose는 미사용, 6dof 전용)
   iou: 0.5                    # NMS IoU 임계값
   num: 12                     # 시각화할 프레임 수
   out: _pred

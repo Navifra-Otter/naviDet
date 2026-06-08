@@ -1,15 +1,19 @@
 """
-DINOv3 → YOLO6DoF 지식 증류 학습.
+DINOv3 → Student 지식 증류 학습. model.task로 6DoF / 2D 멀티태스크(pose)를 선택한다.
 
 Total Loss = α(epoch)·Distillation + β(epoch)·Task
   - Distillation: Student neck 특징을 FeatureProjector로 DINOv3 차원에 매핑한 뒤,
                   DINOv3의 '순수 patch 공간 특징'(register/cls 제거)과 정렬 (cosine/MSE)
-  - Task        : Pose6DoFLoss (= Depth Head + 6D Head 손실의 합)
+                  → backbone/neck 공유 구조라 task와 무관하게 동일하게 동작.
+  - Task        : task="6dof" → Pose6DoFLoss(Depth + 6D Head)
+                  task in {pose,detect,segment} → MultiTaskLoss
 
 사용 예
 -------
-  # DINOv3 가중치 지정
-  python -m navidet.tools.train_distill --set distill.teacher_ckpt=dinov3_ft.pth
+  # 6DoF 증류 (기본 config)
+  python -m navidet.tools.train_distill --config navidet/config/default_6dof.yaml
+  # 2D pose 증류
+  python -m navidet.tools.train_distill --config navidet/config/default_pose.yaml
   # teacher_ckpt 비우면 Mock teacher로 파이프라인 스모크
   python -m navidet.tools.train_distill --set train.epochs=2 train.limit=8
 """
@@ -23,13 +27,21 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
-from navidet.core.model import YOLO6DoF
+from navidet.core.model import YOLO6DoF, YOLOPose, TASK_PRESET
 from navidet.module.dataset import PoseDataset, collate_fn
 from navidet.module.distill import (DINOv3Teacher, FeatureProjector, MockDINOv3,
                                      feature_distillation_loss, loss_weights)
 from navidet.module.loss import Pose6DoFLoss
+from navidet.module.loss_mt import MultiTaskLoss
 from navidet.module.trainer import EpochReporter, Progress
 from navidet.utils.config import load_config
+
+
+# task별 epoch 손실 집계 키 (train.py와 동일)
+LOSS_KEYS = {
+    "6dof": ["box", "dfl", "obj", "cls", "rot", "size", "depth", "trans", "total"],
+    "pose": ["box", "dfl", "cls", "seg", "kpt", "vis", "total"],
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -67,16 +79,18 @@ def move_targets(t, device):
 #  전체 학습 루프 (한 epoch)
 # --------------------------------------------------------------------------- #
 def train_one_epoch(student, projector, teacher, loss_fn, loader, optimizer,
-                    device, epoch, total_epochs, dc, scaler=None, amp=False):
+                    device, epoch, total_epochs, dc, scaler=None, amp=False,
+                    task="6dof"):
     student.train()
     projector.train()
     teacher.eval()                                         # ★ Teacher는 항상 eval
+    is_6dof = task == "6dof"
 
     # 4. Decoupled scheduler — epoch에 따른 α(distill) / β(task)
     alpha, beta = loss_weights(epoch, total_epochs, dc.alpha0, dc.beta0, dc.beta1, dc.sched)
 
-    # 일반 학습과 동일한 손실 항목(box/cls/rot/size/depth/trans/total) + distill 집계
-    keys = ["box", "dfl", "obj", "cls", "rot", "size", "depth", "trans", "total"]
+    # 일반 학습과 동일한 task 손실 항목 + distill 집계
+    keys = LOSS_KEYS.get(task, LOSS_KEYS["pose"])
     agg = {k: 0.0 for k in keys}
     agg["distill"] = 0.0
     n = 0
@@ -89,11 +103,14 @@ def train_one_epoch(student, projector, teacher, loss_fn, loader, optimizer,
             # --- Student forward (서브모듈 직접 호출로 neck 특징 확보) ---
             feats = student.backbone(imgs)
             n3, n4, n5 = student.neck(feats)               # 'Neck / Feature Fusion' 출력
-            det = student.head((n3, n4, n5))               # 6D Head (train: raw dict)
-            depth = student.depth_head(n3)                 # Depth Head
-            out = {"det": det, "depth": depth}
+            head_out = student.head((n3, n4, n5))          # train: raw dict
+            if is_6dof:
+                depth = student.depth_head(n3)             # Depth Head
+                out = {"det": head_out, "depth": depth}
+            else:
+                out = head_out                             # MultiTaskHead raw dict
 
-            # --- Task Loss (Depth + 6D) ---
+            # --- Task Loss ---
             task_loss, items = loss_fn(out, targets)
 
             # --- Distillation Loss ---
@@ -123,8 +140,9 @@ def train_one_epoch(student, projector, teacher, loss_fn, loader, optimizer,
                 list(student.parameters()) + list(projector.parameters()), 10.0)
             optimizer.step()
 
-        for k in keys:                                 # task 손실 항목 (total=task total)
-            agg[k] += items[k]
+        for k, v in items.items():                     # task 손실 항목 (total=task total)
+            if k in agg:
+                agg[k] += v
         agg["distill"] += float(distill_loss.detach())
         n += 1
         prog.step(it, total=agg["total"] / n, distill=agg["distill"] / n)
@@ -141,6 +159,8 @@ def main():
     args = ap.parse_args()
     cfg = load_config(args.config, args.set)
     d, m, tr, dc = cfg.data, cfg.model, cfg.train, cfg.distill
+    task = m.get("task", "6dof")
+    is_6dof = task == "6dof"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(tr.out, exist_ok=True)
@@ -156,50 +176,61 @@ def main():
     with open(os.path.join(tr.out, "config.yaml"), "w", encoding="utf-8") as f:
         f.write(cfg_dump)
 
-    # 데이터
-    train_ds = PoseDataset(d.train_root, ini=d.ini, imgsz=d.imgsz,
-                           depth_scale=d.depth_scale, rmse_thresh=d.rmse_thresh,
-                           limit=tr.limit, pose_mode=d.get("pose_mode", "full"),
-                           use_cache=d.get("use_cache", True))
+    # 데이터 (task에 따라 6DoF GT 또는 2D 멀티태스크 GT 생성)
+    kpt_shape = tuple(m.get("kpt_shape", (4, 3)))
+    ds_kw = dict(ini=d.ini, imgsz=d.imgsz, depth_scale=d.depth_scale,
+                 rmse_thresh=d.rmse_thresh, pose_mode=d.get("pose_mode", "full"),
+                 task=task, kpt_shape=kpt_shape, use_cache=d.get("use_cache", True))
+    train_ds = PoseDataset(d.train_root, limit=tr.limit, **ds_kw)
     train_loader = DataLoader(train_ds, batch_size=tr.batch, shuffle=True,
                               num_workers=tr.workers, collate_fn=collate_fn,
                               pin_memory=(device.type == "cuda"), drop_last=True)
     print(f"train frames: {len(train_ds)}")
 
-    # 검증셋 (pose 지표 + 시각화용)
-    val_ds = PoseDataset(d.val_root, ini=d.ini, imgsz=d.imgsz,
-                         depth_scale=d.depth_scale, rmse_thresh=d.rmse_thresh,
-                         pose_mode=d.get("pose_mode", "full"),
-                         use_cache=d.get("use_cache", True)) \
-        if d.get("val_root") else None
+    # 검증셋 (6DoF만 pose 지표 평가, 2D task는 손실 곡선만)
+    val_ds = PoseDataset(d.val_root, **ds_kw) if d.get("val_root") else None
     viz_num = tr.get("val_viz_num", 0) if val_ds is not None else 0
     viz_idx = list(range(min(viz_num, len(val_ds)))) if viz_num else []
 
     # 모델: Student + Projector + Teacher
-    student = YOLO6DoF(nc=d.nc, scale=m.scale, rot_repr=m.rot_repr,
-                       light_head=m.get("light_head", True)).to(device)
+    light_head = m.get("light_head", True)
+    nm = m.get("nm", 32)
+    if is_6dof:
+        student = YOLO6DoF(nc=d.nc, scale=m.scale, rot_repr=m.rot_repr,
+                           light_head=light_head).to(device)
+        loss_fn = Pose6DoFLoss(nc=d.nc, rot_repr=m.rot_repr,
+                               weights=cfg.loss.to_dict()).to(device)
+    else:
+        tasks = TASK_PRESET[task]
+        student = YOLOPose(nc=d.nc, scale=m.scale, tasks=tasks, nm=nm,
+                           kpt_shape=kpt_shape).to(device)
+        loss_fn = MultiTaskLoss(nc=d.nc, strides=student.head.strides, tasks=tasks,
+                                kpt_shape=kpt_shape, nm=nm,
+                                weights=cfg.loss.to_dict()).to(device)
+    # Projector는 neck n3 채널 → teacher 차원 (구조 공유라 task 무관)
     projector = FeatureProjector(student.neck.out_channels[0], dc.teacher_dim).to(device)
     teacher = build_teacher(dc, device)
-
-    loss_fn = Pose6DoFLoss(nc=d.nc, rot_repr=m.rot_repr, weights=cfg.loss.to_dict()).to(device)
     # Student + Projector 만 최적화 (Teacher 제외)
     optimizer = torch.optim.AdamW(
         list(student.parameters()) + list(projector.parameters()),
         lr=tr.lr, weight_decay=tr.weight_decay)
     scaler = torch.amp.GradScaler(enabled=tr.amp and device.type == "cuda")
 
-    # 일반 학습과 동일한 로깅·저장 (pose 지표, history, curves, val_viz, best/last)
+    # 일반 학습과 동일한 로깅·저장 (6DoF만 pose 지표/val_viz, 2D는 손실 곡선만)
     reporter = EpochReporter(tr.out, tr.epochs, tr.save_interval, val_ds=val_ds,
                              viz_idx=viz_idx, class_names=list(d.class_names),
-                             conf=cfg.predict.conf, iou=cfg.predict.iou)
-    meta = dict(nc=d.nc, scale=m.scale, rot_repr=m.rot_repr, imgsz=d.imgsz,
-                light_head=m.get("light_head", True), cfg=cfg.to_dict())
+                             conf=cfg.predict.conf, iou=cfg.predict.iou, task=task,
+                             viz_conf=cfg.predict.get("viz_conf", cfg.predict.conf))
+    meta = dict(nc=d.nc, scale=m.scale, rot_repr=m.get("rot_repr", "6d"), imgsz=d.imgsz,
+                light_head=light_head, task=task, kpt_shape=list(kpt_shape),
+                nm=nm, cfg=cfg.to_dict())
     best = float("inf")
     for ep in range(tr.epochs):
         lr_now = optimizer.param_groups[0]["lr"]
         stats, a, b = train_one_epoch(student, projector, teacher, loss_fn,
                                       train_loader, optimizer, device, ep, tr.epochs,
-                                      dc, scaler if tr.amp else None, amp=tr.amp)
+                                      dc, scaler if tr.amp else None, amp=tr.amp,
+                                      task=task)
         # distill 전용 정보(α/β/distill)는 prefix로, 나머지(손실·pose지표·저장)는 동일
         prefix = f"α={a:.3f} β={b:.3f} distill={stats['distill']:.4f} "
         make_ckpt = lambda e=ep: {"model": student.state_dict(),

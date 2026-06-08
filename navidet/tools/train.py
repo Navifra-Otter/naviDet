@@ -156,8 +156,9 @@ def main():
 
     reporter = EpochReporter(tr_cfg.out, tr_cfg.epochs, tr_cfg.save_interval,
                              val_ds=val_ds, viz_idx=viz_idx, class_names=list(d.class_names),
-                             conf=cfg.predict.conf, iou=cfg.predict.iou, task=task)
-    meta = dict(nc=d.nc, scale=m.scale, rot_repr=m.rot_repr, imgsz=d.imgsz,
+                             conf=cfg.predict.conf, iou=cfg.predict.iou, task=task,
+                             viz_conf=cfg.predict.get("viz_conf", cfg.predict.conf))
+    meta = dict(nc=d.nc, scale=m.scale, rot_repr=m.get("rot_repr", "6d"), imgsz=d.imgsz,
                 light_head=light_head, task=task, kpt_shape=list(kpt_shape),
                 nm=m.get("nm", 32), cfg=cfg.to_dict())
     best = float("inf")
