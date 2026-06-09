@@ -42,6 +42,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# 이 파일명(profile.py)이 stdlib의 'profile' 모듈을 가린다. torch._dynamo가
+# cProfile→profile을 import할 때 충돌하므로, 스크립트 디렉터리를 sys.path에서 제거.
+# (sys.path엔 상대경로('scripts')로 들어있을 수 있어 resolve로 비교.)
+_HERE = Path(__file__).resolve().parent
+sys.path[:] = [p for p in sys.path if p and Path(p).resolve() != _HERE]
+# stdlib profile/cProfile 를 지금(scripts/ 제거 후) 미리 import 해 sys.modules에
+# 캐시한다. 이후 torch._dynamo가 cProfile→profile 을 import해도 이 파일이 아니라
+# 캐시된 stdlib 모듈을 쓰게 된다.
+import cProfile  # noqa: E402,F401
+
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__,
