@@ -28,8 +28,8 @@ from navidet.utils.config import load_config
 
 # task별 epoch 손실 집계 키
 LOSS_KEYS = {
-    "6dof": ["box", "dfl", "obj", "cls", "rot", "size", "depth", "trans", "total"],
-    "pose": ["box", "dfl", "cls", "seg", "kpt", "vis", "total"],
+    "6dof": ["box", "obj", "cls", "rot", "size", "depth", "trans", "total"],
+    "pose": ["box", "cls", "seg", "kpt", "vis", "total"],
 }
 
 

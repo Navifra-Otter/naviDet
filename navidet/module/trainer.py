@@ -71,7 +71,7 @@ class EpochReporter:
         """ep(0-base), lr, model, train_stats(손실 dict), make_ckpt(콜백), prefix(추가 로그)."""
         # task별로 표시할 손실 키만 골라 로그 구성 (없는 키는 건너뜀)
         keys = (["box", "cls", "rot", "size", "depth", "trans"] if self.task == "6dof"
-                else ["box", "dfl", "cls", "kpt", "vis"])
+                else ["box", "cls", "kpt", "vis"])
         parts = " ".join(f"{k}={train_stats[k]:.3f}" for k in keys if k in train_stats)
         log = (f"[{ep+1}/{self.total}] {prefix}lr={lr:.2e} "
                f"total={train_stats['total']:.3f} | {parts}")

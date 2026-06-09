@@ -44,14 +44,14 @@ class Det6DoF(nn.Module):
     추론 후 `decode_pose(...)`로 Intrinsics를 적용해 최종 R|t를 복원.
     """
 
-    def __init__(self, nc: int = 80, scale: str = "n", reg_max: int = 16,
+    def __init__(self, nc: int = 80, scale: str = "n",
                  strides: tuple[int, ...] = (8, 16, 32), rot_repr: str = "6d",
                  light_head: bool = True):
         super().__init__()
         self.backbone = Backbone(scale=scale)
         self.neck = FPNNeck(self.backbone.out_channels)
         self.head = Pose6DoFHead(
-            nc=nc, ch=self.neck.out_channels, reg_max=reg_max,
+            nc=nc, ch=self.neck.out_channels,
             strides=strides, rot_repr=rot_repr, light=light_head,
         )
         self.depth_head = DepthHead(self.neck.out_channels[0])  # N3 입력
@@ -112,7 +112,7 @@ class MultiTaskDet(nn.Module):
         eval  → 디코딩 dict (boxes/scores/mask_coef/proto/kpt)
     """
 
-    def __init__(self, nc: int = 80, scale: str = "n", reg_max: int = 16,
+    def __init__(self, nc: int = 80, scale: str = "n",
                  strides: tuple[int, ...] = (8, 16, 32),
                  tasks=("detect", "segment", "pose"), nm: int = 32,
                  kpt_shape=(4, 3)):
@@ -120,7 +120,7 @@ class MultiTaskDet(nn.Module):
         self.backbone = Backbone(scale=scale)
         self.neck = FPNNeck(self.backbone.out_channels)
         self.head = MultiTaskHead(
-            nc=nc, ch=self.neck.out_channels, reg_max=reg_max, strides=strides,
+            nc=nc, ch=self.neck.out_channels, strides=strides,
             tasks=tasks, nm=nm, kpt_shape=kpt_shape,
         )
         self.nc = nc

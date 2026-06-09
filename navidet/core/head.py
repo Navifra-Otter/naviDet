@@ -4,7 +4,7 @@
   · Pose6DoFHead + DepthHead : 6DoF Object Pose Estimation (Direction B)
   · MultiTaskHead   + Proto  : 2D 멀티태스크 (Detection + Segmentation + Pose)
 
-공용 유틸(DFL / make_anchors / dist2bbox)은 두 계열이 공유한다.
+grid/박스 유틸(anchors.py의 grid_points / dist_to_xywh)은 두 계열이 공유한다.
 아래 설명은 Pose6DoFHead(6DoF) 기준이며, 멀티태스크 head는 MultiTaskHead 참조.
 
 --------------------------------------------------------------------------
@@ -13,7 +13,7 @@
 다이어그램 구조에 맞춘 멀티태스크 설계. 멀티스케일 각 위치(anchor point)마다
 디커플드(decoupled) 브랜치로 아래를 동시에 예측한다.
 
-    1) 2D BBox      : DFL(Distribution Focal Loss) 분포 (l,t,r,b) → xyxy
+    1) 2D BBox      : (l,t,r,b) 네 변 거리 직접 회귀 → xyxy (anchor-free)
     2) Objectness   : 객체 존재 확률 1채널
     3) Class Score  : 클래스별 점수 nc채널
     4) 3D Rotation  : 6D 표현(기본) 또는 Quaternion 직접 회귀
@@ -37,66 +37,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .anchors import dist_to_xywh, grid_points
 from .blocks import Conv
-
-
-class DFL(nn.Module):
-    """
-    Distribution Focal Loss 적분 모듈.
-
-    box의 각 변(l,t,r,b)을 reg_max개 bin에 대한 분포로 예측한 뒤,
-    softmax 기대값(expectation)을 취해 실수 거리값 1개로 변환한다.
-    """
-
-    def __init__(self, reg_max: int = 16):
-        super().__init__()
-        self.reg_max = reg_max
-        self.conv = nn.Conv2d(reg_max, 1, 1, bias=False).requires_grad_(False)
-        # 가중치를 0..reg_max-1 로 고정 → conv가 곧 기대값 계산
-        self.conv.weight.data[:] = nn.Parameter(
-            torch.arange(reg_max, dtype=torch.float).view(1, reg_max, 1, 1)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, 4*reg_max, A]  (A = anchor 총 개수)
-        B, _, A = x.shape
-        x = x.view(B, 4, self.reg_max, A).transpose(1, 2)        # [B, reg_max, 4, A]
-        x = x.softmax(dim=1)                                     # bin 분포
-        return self.conv(x).view(B, 4, A)                        # [B, 4, A] (l,t,r,b)
-
-
-def make_anchors(feats: list[torch.Tensor], strides: tuple[int, ...],
-                 grid_cell_offset: float = 0.5):
-    """
-    각 FPN 레벨의 feature map으로부터 anchor point(셀 중심)와 stride 텐서를 생성.
-
-    반환:
-        anchor_points: [A, 2]  (feature-map 좌표계의 셀 중심 x,y)
-        stride_tensor: [A, 1]
-    """
-    anchor_points, stride_tensor = [], []
-    dtype, device = feats[0].dtype, feats[0].device
-    for feat, stride in zip(feats, strides):
-        _, _, h, w = feat.shape
-        sx = torch.arange(w, device=device, dtype=dtype) + grid_cell_offset
-        sy = torch.arange(h, device=device, dtype=dtype) + grid_cell_offset
-        sy, sx = torch.meshgrid(sy, sx, indexing="ij")
-        anchor_points.append(torch.stack((sx, sy), -1).view(-1, 2))   # [h*w, 2]
-        stride_tensor.append(torch.full((h * w, 1), stride, dtype=dtype, device=device))
-    return torch.cat(anchor_points), torch.cat(stride_tensor)
-
-
-def dist2bbox(distance: torch.Tensor, anchor_points: torch.Tensor, xywh: bool = False):
-    """DFL이 뱉은 (l,t,r,b) 거리 → bbox 로 변환. distance: [B,4,A], anchor: [A,2]"""
-    lt, rb = distance.chunk(2, dim=1)              # 각 [B,2,A]
-    ap = anchor_points.transpose(0, 1)             # [2, A]
-    x1y1 = ap - lt                                 # [B,2,A]
-    x2y2 = ap + rb
-    if xywh:
-        c = (x1y1 + x2y2) / 2
-        wh = x2y2 - x1y1
-        return torch.cat((c, wh), dim=1)           # [B,4,A] (cx,cy,w,h)
-    return torch.cat((x1y1, x2y2), dim=1)          # [B,4,A] (x1,y1,x2,y2)
 
 
 ROT_DIM = {"6d": 6, "quat": 4}
@@ -109,32 +51,29 @@ class Pose6DoFHead(nn.Module):
     Args:
         nc        : 클래스 수
         ch        : 각 입력 스케일(P3,P4,P5)의 채널 튜플
-        reg_max   : DFL bin 수
         strides   : 각 스케일의 stride (P3=8, P4=16, P5=32)
         rot_repr  : "6d"(기본) 또는 "quat"
     """
 
     def __init__(self, nc: int = 80, ch: tuple[int, ...] = (256, 512, 1024),
-                 reg_max: int = 16, strides: tuple[int, ...] = (8, 16, 32),
+                 strides: tuple[int, ...] = (8, 16, 32),
                  rot_repr: str = "6d", light: bool = True):
         super().__init__()
         assert rot_repr in ROT_DIM, f"rot_repr must be one of {list(ROT_DIM)}"
         self.nc = nc
         self.nl = len(ch)                  # 레벨 수 (3)
-        self.reg_max = reg_max
         self.rot_repr = rot_repr
         self.rot_dim = ROT_DIM[rot_repr]   # 6 또는 4
         self.size_dim = 3                  # (dx, dy, dz)
-        self.no_box = 4 * reg_max          # box 분기 출력 채널
+        self.no_box = 4                    # box 분기 출력 채널 (l,t,r,b 직접 회귀)
         self.strides = strides
         self.light = light                 # True=경량 head, False=원본 head
         self.pose_dim = self.rot_dim + self.size_dim
-        self.dfl = DFL(reg_max) if reg_max > 1 else nn.Identity()
         # True면 eval 모드에서도 loss용 raw dict를 반환 (BN은 eval 통계 사용)
         self.return_raw = False
 
-        c2 = max(16, ch[0] // 4, self.no_box)        # box 브랜치 (정밀도 위해 conv 2개)
-        # --- 2D BBox 회귀 (DFL) — 두 head 공통, conv 2개 ---
+        c2 = max(16, ch[0] // 4)                      # box 브랜치 (정밀도 위해 conv 2개)
+        # --- 2D BBox 회귀 (l,t,r,b 직접) — 두 head 공통, conv 2개 ---
         self.cv_box = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3),
                           nn.Conv2d(c2, self.no_box, 1)) for x in ch
@@ -189,7 +128,7 @@ class Pose6DoFHead(nn.Module):
         """
         box_out, cls_out, rot_out, size_out = [], [], [], []
         for i, x in enumerate(feats):
-            box_out.append(self.cv_box[i](x))    # [B, 4*reg_max, Hi, Wi]
+            box_out.append(self.cv_box[i](x))    # [B, 4, Hi, Wi] (l,t,r,b raw)
             cls_out.append(self.cv_cls[i](x))    # [B, nc+1,      Hi, Wi]
             if self.light:                       # 통합 pose 브랜치 → rot/size split
                 pose = self.cv_pose[i](x)        # [B, rot_dim+3, Hi, Wi]
@@ -206,15 +145,15 @@ class Pose6DoFHead(nn.Module):
 
         # ---------------- Inference 디코딩 ---------------- #
         # 1) 레벨별 [B,C,Hi,Wi] → [B,C,A]로 flatten 후 concat (A = ΣHi*Wi)
-        anchors, strides = make_anchors(feats, self.strides)   # [A,2], [A,1]
-        box = torch.cat([b.flatten(2) for b in box_out], 2)    # [B, 4*reg_max, A]
+        points, strides = grid_points(feats, self.strides)     # [A,2](셀), [A,1]
+        box = torch.cat([b.flatten(2) for b in box_out], 2)    # [B, 4, A] (l,t,r,b raw)
         cls = torch.cat([c.flatten(2) for c in cls_out], 2)    # [B, nc+1,      A]
         rot = torch.cat([r.flatten(2) for r in rot_out], 2)    # [B, rot_dim,   A]
         size = torch.cat([s.flatten(2) for s in size_out], 2)  # [B, 3,         A]
 
-        # 2) 2D box: DFL 기대값 → (cx,cy,w,h)(픽셀)
-        dist = self.dfl(box)                                   # [B, 4, A]
-        boxes = dist2bbox(dist, anchors, xywh=True)            # [B, 4, A] (셀단위)
+        # 2) 2D box: (l,t,r,b) 거리(softplus로 양수화) → (cx,cy,w,h)(픽셀)
+        dist = F.softplus(box)                                 # [B, 4, A] ≥ 0
+        boxes = dist_to_xywh(dist, points)                     # [B, 4, A] (셀단위)
         boxes = boxes * strides.transpose(0, 1)                # 픽셀 좌표로 스케일
 
         # 3) objectness/class
@@ -284,14 +223,13 @@ class MultiTaskHead(nn.Module):
     Detect(+Segment +Pose) 통합 head — 표준 anchor-free 2D 방식.
 
     멀티스케일 각 anchor point마다 디커플드 브랜치로 예측:
-        Detect   : 2D BBox(DFL 분포 l,t,r,b) + Class score(nc)
+        Detect   : 2D BBox(l,t,r,b 직접 회귀) + Class score(nc)
         Segment  : per-anchor mask coefficient(nm) + 공유 Proto → coeff @ proto
         Pose     : per-anchor keypoint (nk × kpt_dim[x,y,(vis)])
 
     Args:
         nc       : 클래스 수
         ch       : 입력 스케일 채널 (P3,P4,P5)
-        reg_max  : DFL bin 수
         strides  : 각 스케일 stride
         tasks    : 활성 태스크 ("detect" 필수, "segment"/"pose" 선택)
         nm       : 마스크 프로토타입 수 (segment)
@@ -299,14 +237,13 @@ class MultiTaskHead(nn.Module):
         kpt_shape: (nk, kpt_dim) — 키포인트 수, 차원(2=xy / 3=xy+vis)
     """
 
-    def __init__(self, nc=80, ch=(256, 512, 1024), reg_max=16, strides=(8, 16, 32),
+    def __init__(self, nc=80, ch=(256, 512, 1024), strides=(8, 16, 32),
                  tasks=("detect", "segment", "pose"), nm=32, npr=256,
                  kpt_shape=(4, 3)):
         super().__init__()
         self.nc = nc
         self.nl = len(ch)
-        self.reg_max = reg_max
-        self.no_box = 4 * reg_max
+        self.no_box = 4                            # box 분기 출력 (l,t,r,b 직접 회귀)
         self.strides = strides
         self.tasks = tuple(tasks)
         self.segment = "segment" in self.tasks
@@ -314,12 +251,11 @@ class MultiTaskHead(nn.Module):
         self.nm = nm
         self.kpt_shape = kpt_shape
         self.nk = kpt_shape[0] * kpt_shape[1]      # 총 keypoint 출력 채널
-        self.dfl = DFL(reg_max) if reg_max > 1 else nn.Identity()
         self.return_raw = False
 
-        c2 = max(16, ch[0] // 4, self.no_box)      # box 브랜치
+        c2 = max(16, ch[0] // 4)                   # box 브랜치
         c3 = max(ch[0], min(nc, 100))              # cls 브랜치
-        # --- Detect: box(DFL) + cls ---
+        # --- Detect: box(l,t,r,b 직접) + cls ---
         self.cv_box = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, self.no_box, 1))
             for x in ch)
@@ -371,12 +307,12 @@ class MultiTaskHead(nn.Module):
     # ------------------------------------------------------------------ #
     def _decode(self, out):
         feats = out["feats"]
-        anchors, strides = make_anchors(feats, self.strides)       # [A,2],[A,1]
-        box = torch.cat([b.flatten(2) for b in out["box"]], 2)     # [B,4*rm,A]
+        points, strides = grid_points(feats, self.strides)         # [A,2](셀),[A,1]
+        box = torch.cat([b.flatten(2) for b in out["box"]], 2)     # [B,4,A] (l,t,r,b raw)
         cls = torch.cat([c.flatten(2) for c in out["cls"]], 2)     # [B,nc,A]
 
-        dist = self.dfl(box)
-        boxes = dist2bbox(dist, anchors, xywh=True) * strides.transpose(0, 1)  # px
+        dist = F.softplus(box)                                     # [B,4,A] ≥ 0
+        boxes = dist_to_xywh(dist, points) * strides.transpose(0, 1)  # px
         scores = cls.sigmoid()
         dec = {"boxes": boxes, "scores": scores}                   # [B,4,A],[B,nc,A]
 
@@ -385,7 +321,7 @@ class MultiTaskHead(nn.Module):
             dec["proto"] = out["proto"]                            # [B,nm,Hm,Wm]
         if self.pose:
             kpt = torch.cat([k.flatten(2) for k in out["kpt"]], 2)  # [B, nk, A]
-            dec["kpt"] = self.decode_keypoints(kpt, anchors, strides)
+            dec["kpt"] = self.decode_keypoints(kpt, points, strides)
         return dec
 
     def decode_keypoints(self, kpt, anchors, strides):

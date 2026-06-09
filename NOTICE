@@ -3,11 +3,24 @@ Copyright 2026 Navifra
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
-The neural network components (CSP-based backbone, PAN neck, detection /
-segmentation / pose / 6DoF heads, and convolutional building blocks) are an
-independent implementation written from architectural descriptions using
-PyTorch only. The project does not depend on, bundle, or load weights from the
-Ultralytics library or any AGPL-licensed software.
+The detection stack is built from permissively-licensed components and an
+independent implementation. It does not depend on, bundle, or load weights from
+the Ultralytics library or any AGPL-licensed software.
 
-External pretrained weights, when used (e.g. DINOv3 as a distillation teacher),
-are obtained separately by the user and remain subject to their own licenses.
+Third-party components (each under its own license):
+  · Backbone  — timm (PyTorch Image Models), Apache License 2.0.
+                https://github.com/huggingface/pytorch-image-models
+  · Neck      — torchvision FeaturePyramidNetwork, BSD 3-Clause License.
+                https://github.com/pytorch/vision
+
+Independently implemented components (PyTorch only, no third-party source):
+  · Anchor-free detection head (l,t,r,b distance regression) and the
+    center-sampling label assignment / IoU + BCE losses follow the publicly
+    described FCOS / YOLOX design (YOLOX is Apache-2.0) and were written from
+    those architectural descriptions, not copied from any source code.
+  · 6DoF / depth / segmentation / pose heads and their losses, the RANSAC-based
+    pose-label pipeline, and the geometry/camera utilities.
+
+External pretrained weights, when used (e.g. timm backbone weights, or DINOv3 as
+a distillation teacher), are obtained separately and remain subject to their own
+licenses.
