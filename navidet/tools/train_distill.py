@@ -220,8 +220,9 @@ def main():
 
     # 데이터 (task에 따라 6DoF GT 또는 2D 멀티태스크 GT 생성)
     kpt_shape = tuple(m.get("kpt_shape", (4, 3)))
-    ds_kw = dict(ini=d.ini, imgsz=d.imgsz, depth_scale=d.depth_scale,
-                 rmse_thresh=d.rmse_thresh, pose_mode=d.get("pose_mode", "full"),
+    # depth_scale/rmse_thresh는 6DoF 전용 — 2D pose/detect에선 config에 없어도 되도록 기본값.
+    ds_kw = dict(ini=d.get("ini"), imgsz=d.imgsz, depth_scale=d.get("depth_scale", 0.001),
+                 rmse_thresh=d.get("rmse_thresh", 0.05), pose_mode=d.get("pose_mode", "full"),
                  task=task, kpt_shape=kpt_shape, use_cache=d.get("use_cache", True))
     train_ds = PoseDataset(d.train_root, limit=tr.limit, **ds_kw)
     train_loader = DataLoader(train_ds, batch_size=tr.batch, shuffle=True,

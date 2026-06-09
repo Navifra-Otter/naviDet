@@ -29,6 +29,19 @@ from ..utils.camera import load_orbbec_ini
 from .pose_label import keypoints_to_pose, parse_yolo_kpt_label
 
 
+_IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+
+
+def find_image(images_dir: str, stem: str) -> str:
+    """images_dir에서 stem에 해당하는 이미지를 확장자 무관하게 찾는다."""
+    for ext in _IMG_EXTS:
+        p = os.path.join(images_dir, stem + ext)
+        if os.path.exists(p):
+            return p
+    raise FileNotFoundError(
+        f"이미지를 찾지 못함: {os.path.join(images_dir, stem)}{{{','.join(_IMG_EXTS)}}}")
+
+
 def letterbox_rgb(img: Image.Image, new: int, color=114):
     """비율 유지 리사이즈 + 패딩. 반환: np uint8[new,new,3], r, (left, top)."""
     w, h = img.size
@@ -63,13 +76,15 @@ class PoseDataset(Dataset):
         self.imgsz = imgsz
         self.dep_size = imgsz // 2          # depth head 출력 해상도와 일치
         self.depth_scale = depth_scale
-        self.num_kpts = num_kpts
         self.rmse_thresh = rmse_thresh
         self.pose_mode = pose_mode          # "face"(권장)|"full"|"bottom"|"corners" — 즉석계산 경로
         # task: "6dof"(R,t,size,depth GT) | "pose"/"detect"(2D 멀티태스크 GT)
         self.task = task
         self.is_2d = task in ("pose", "detect", "segment")
         self.kpt_dim = kpt_shape[1]         # 2(xy) / 3(xy+vis)
+        # 2D pose는 키포인트 수를 kpt_shape[0]에서 유도(라벨 파싱과 head 출력 일치 보장).
+        # 6dof는 코너 4점 기반이라 명시적 num_kpts 사용.
+        self.num_kpts = kpt_shape[0] if self.is_2d else num_kpts
 
         # 카메라 intrinsics는 6DoF에서만 필요(keypoint+depth → R,t,size 계산/캐시).
         # 2D task(pose/detect/segment)는 K가 불필요하고, 라벨 정규화 기준 W,H도
@@ -155,8 +170,9 @@ class PoseDataset(Dataset):
         """task in {pose,detect}: RGB + 2D GT(bbox/keypoint)만 생성."""
         lp = self.labels[idx]
         stem = os.path.splitext(os.path.basename(lp))[0]
-        img = Image.open(os.path.join(self.root, "images", stem + ".png")).convert("RGB")
+        img = Image.open(find_image(os.path.join(self.root, "images"), stem)).convert("RGB")
 
+        W, H = img.size
         cls_l, box_l, kpt_l = self._gt_pose_original(lp, img.size)   # img.size=(W,H)
         rgb, r, left, top = letterbox_rgb(img, self.imgsz)
         x = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
@@ -178,14 +194,16 @@ class PoseDataset(Dataset):
             gt_kpts = torch.zeros(0, self.num_kpts, self.kpt_dim)
 
         return {"img": x, "gt_labels": gt_labels, "gt_bboxes": gt_bboxes,
-                "gt_kpts": gt_kpts, "stem": stem}
+                "gt_kpts": gt_kpts, "stem": stem,
+                # letterbox 역변환용 (COCO 평가에서 원본 좌표 복원): x_ori=(x-left)/r
+                "ori_wh": (W, H), "ratio": r, "pad": (left, top)}
 
     def __getitem__(self, idx):
         if self.is_2d:
             return self._getitem_2d(idx)
         lp = self.labels[idx]
         stem = os.path.splitext(os.path.basename(lp))[0]
-        img = Image.open(os.path.join(self.root, "images", stem + ".png")).convert("RGB")
+        img = Image.open(find_image(os.path.join(self.root, "images"), stem)).convert("RGB")
         depth_m = np.asarray(
             Image.open(os.path.join(self.root, "depth", stem + ".png"))
         ).astype(np.float32) * self.depth_scale

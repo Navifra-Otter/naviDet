@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import random
 
@@ -45,8 +46,10 @@ def render_pose_sample(model, sample, names, conf=0.25, iou=0.5):
     boxes = dec["boxes"][0].transpose(0, 1)          # [A,4] xywh px
     scores = dec["scores"][0]                        # [nc,A]
     cls_score, cls_id = scores.max(0)                # [A]
-    keep_conf = cls_score > conf
     xyxy = xywh2xyxy(boxes)
+    # 학습 초반/불안정 시 박스가 NaN/inf로 나올 수 있어 시각화가 죽지 않도록 사전 제외
+    finite = torch.isfinite(xyxy).all(1) & torch.isfinite(cls_score)
+    keep_conf = (cls_score > conf) & finite
     has_kpt = "kpt" in dec and getattr(model, "kpt_shape", None)
     if has_kpt:
         nk, D = model.kpt_shape
@@ -70,7 +73,7 @@ def render_pose_sample(model, sample, names, conf=0.25, iou=0.5):
                 for k in range(nk):
                     kx, ky = kpt[i, k, 0].item(), kpt[i, k, 1].item()
                     v = kpt[i, k, 2].item() if D == 3 else 1.0
-                    if v > 0.3:
+                    if v > 0.3 and math.isfinite(kx) and math.isfinite(ky):
                         draw.ellipse([kx - 3, ky - 3, kx + 3, ky + 3], fill=c)
     return pil, int(idx.numel())
 

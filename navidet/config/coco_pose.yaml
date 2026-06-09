@@ -1,0 +1,86 @@
+# ============================================================
+#  navidet 2D pose 설정 — COCO keypoints (person, 17 keypoints)
+#  목적: COCO val2017에서 keypoint AP/AR 산출 → published 방법론과 비교.
+#  CLI override 예: --set train.epochs=300 model.scale=s data.imgsz=640
+#
+#  ⚠ 데이터 포맷 주의
+#  PoseDataset 은 YOLO-pose 포맷만 읽는다:
+#     <root>/images/<stem>.png        (※ 현재 코드는 .png 하드코딩)
+#     <root>/labels/<stem>.txt        (cls cx cy w h  x1 y1 v1 ... x17 y17 v17, 정규화)
+#  fiftyone COCO( /home/otter/fiftyone/coco-2017 )는 COCO-json 포맷(data/*.jpg + labels.json)
+#  이라 그대로는 안 읽힌다. 아래 train_root/val_root 는 "변환 후" 산출물 경로이며,
+#  별도 변환(COCO json → YOLO-pose txt, jpg→png 또는 dataset .jpg 지원)이 선행돼야 한다.
+# ============================================================
+
+data:
+  # 변환된 YOLO-pose 레이아웃(<root>/images, <root>/labels)을 가리킨다.
+  train_root: "/home/otter/datasets/coco-pose/train"
+  val_root:   "/home/otter/datasets/coco-pose/val"
+  ini:        ""              # 2D pose task는 카메라 intrinsics 불필요
+  imgsz: 640                  # COCO-pose 표준 입력(YOLOv8-pose 등과 동일 비교)
+  use_cache: False            # 2D task는 6DoF npz 캐시를 쓰지 않음
+  nc: 1                       # person 단일 클래스
+  class_names: [person]
+
+  # COCO keypoint 메타(평가/증강용 참고값). 순서:
+  # 0 nose 1 l_eye 2 r_eye 3 l_ear 4 r_ear 5 l_sho 6 r_sho 7 l_elb 8 r_elb
+  # 9 l_wri 10 r_wri 11 l_hip 12 r_hip 13 l_knee 14 r_knee 15 l_ank 16 r_ank
+  flip_idx: [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]
+  # OKS sigma (COCOeval keypoint 표준값) — AP 계산에 사용
+  kpt_sigmas: [0.026, 0.025, 0.025, 0.035, 0.035, 0.079, 0.079, 0.072, 0.072,
+               0.062, 0.062, 0.107, 0.107, 0.087, 0.087, 0.089, 0.089]
+
+model:
+  scale: s                    # n/s/m/l/x — published 비교 대상에 맞춰 선택
+  task: pose                  # detect | segment | pose
+  nm: 32                      # segment 미사용
+  kpt_shape: [17, 3]          # COCO: 17 keypoints, dim 3(x,y,vis)
+
+train:
+  epochs: 300                 # COCO-pose 표준 스케줄(YOLOv8-pose 기준)
+  batch: 16
+  gpus: auto                  # auto(전체) | 개수 | id목록([0,1])
+  lr: 1.0e-3
+  weight_decay: 5.0e-4
+  workers: 8
+  amp: true
+  limit: 0
+  out: runs/pose/coco
+  save_interval: 10
+  val_viz_num: 10
+
+# 손실 가중치 (MultiTaskLoss)
+loss:
+  box: 7.5
+  dfl: 1.5
+  cls: 0.5
+  seg: 2.5                     # pose만이면 미사용
+  kpt: 12.0                   # keypoint 회귀
+  vis: 1.0                    # keypoint visibility (kpt_dim=3)
+
+# 지식 증류 (DINOv3 → Student) — 필요 없으면 teacher_ckpt 비워 MockDINOv3(스모크)
+distill:
+  teacher_ckpt: "checkpoints/dinov3/vit/dinov3_vits16_pretrain_lvd1689m-08c60483.pth"
+  repo_dir: ""
+  hub_name: dinov3_vits16
+  teacher_dim: 384
+  patch_size: 16
+  num_register_tokens: 4
+  teacher_imgsz: 640
+  loss: cosine
+  align: teacher
+  alpha0: 1.0
+  beta0: 0.3
+  beta1: 1.0
+  sched: cosine
+
+# 추론/평가/시각화
+predict:
+  ckpt: runs/pose/coco/best.pt
+  conf: 0.001                 # COCO AP는 낮은 conf로 많은 후보 제출(표준 관행)
+  viz_conf: 0.05
+  iou: 0.7                    # NMS IoU
+  num: 12
+  out: _pred
+  seed: 0
+  publish_json: true
