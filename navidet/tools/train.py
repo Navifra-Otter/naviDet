@@ -100,6 +100,9 @@ def run_epoch(model, loss_fn, loader, device, optimizer=None, scaler=None, amp=F
         prog.close()
     if n_skip:
         print(f"  [warn] {n_skip} non-finite batch(es) skipped")
+    if train and n == 0:
+        # 유효 step 0 (전부 비유한) → 평균 0 대신 total=inf 로 best 오선정 차단.
+        return {**{k: float("nan") for k in agg}, "total": float("inf")}
     return {k: v / max(n, 1) for k, v in agg.items()}
 
 

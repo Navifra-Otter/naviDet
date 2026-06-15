@@ -97,12 +97,17 @@ class ForwardTimer:
         self.module = module
         self.times_ms: list[float] = []
         self.enabled = False
+        self.capture = False          # True면 다음 forward의 입력을 1회 저장(FLOPs 계산용)
+        self.sample = None            # 캡처된 (args, kwargs)
         self._cuda = (next(module.parameters()).is_cuda
                       if any(True for _ in module.parameters()) else False)
         self._orig = module.forward
         module.forward = self._wrapped
 
     def _wrapped(self, *args, **kwargs):
+        if self.capture and self.sample is None:
+            self.sample = (args, kwargs)   # 실제 모델이 받는 입력 그대로 캡처
+            self.capture = False
         if not self.enabled:
             return self._orig(*args, **kwargs)
         torch = self.torch
@@ -134,6 +139,43 @@ def summarize(name, samples_ms):
     fps = 1000.0 / mean if mean > 0 else float("nan")
     return (f"  {name:<14}: mean {mean:6.2f} ms | median {median:6.2f} | "
             f"p90 {p90:6.2f} | {fps:6.1f} FPS")
+
+
+def compute_gflops(module, args, kwargs):
+    """모델 1회 forward의 GFLOPs(=MAC×2, vision 논문/Ultralytics 컨벤션) 추정.
+
+    실제 forward가 받은 입력(args/kwargs)을 그대로 써서 측정한다.
+    백엔드 우선순위: thop → fvcore → torch 내장(FlopCounterMode).
+    반환: (gflops or None, 사용한 backend 이름).
+    """
+    import torch
+    # 1) thop — YOLO 생태계 기본. MACs 반환 → ×2 로 FLOPs 환산.
+    if not kwargs:
+        try:
+            import thop
+            macs, _ = thop.profile(module, inputs=args, verbose=False)
+            return 2 * macs / 1e9, "thop"
+        except Exception:
+            pass
+    # 2) fvcore — MACs 반환 → ×2.
+    if not kwargs:
+        try:
+            from fvcore.nn import FlopCountAnalysis
+            fca = FlopCountAnalysis(module, args)
+            fca.unsupported_ops_warnings(False)
+            fca.uncalled_modules_warnings(False)
+            return 2 * fca.total() / 1e9, "fvcore"
+        except Exception:
+            pass
+    # 3) torch 내장 — get_total_flops()는 이미 MAC×2(FLOPs). kwargs도 지원.
+    try:
+        from torch.utils.flop_counter import FlopCounterMode
+        fcm = FlopCounterMode(display=False)
+        with fcm, torch.no_grad():
+            module(*args, **kwargs)
+        return fcm.get_total_flops() / 1e9, "torch"
+    except Exception as e:
+        return None, f"실패({type(e).__name__})"
 
 
 def main():
@@ -229,6 +271,7 @@ def main():
             n_params = sum(p.numel() for p in module.model.parameters())
         timer = ForwardTimer(module)
         timer.enabled = True
+        timer.capture = True          # 측정 첫 forward에서 입력을 캡처(FLOPs용)
     else:
         print("  [warn] 내부 nn.Module 을 못 찾음 — forward 격리 측정 생략 (end-to-end 만).")
 
@@ -246,10 +289,24 @@ def main():
     if timer is not None:
         timer.restore()
 
+    # --- GFLOPs (모델이 실제로 받은 입력 기준, 1 forward) ----------------------
+    gflops = backend = None
+    if module is not None and timer is not None and timer.sample is not None:
+        cap_args, cap_kwargs = timer.sample
+        with torch.no_grad():
+            gflops, backend = compute_gflops(module, cap_args, cap_kwargs)
+        # 캡처된 입력 shape (텐서 1개 가정) 표기용
+        in_shape = tuple(cap_args[0].shape) if cap_args and hasattr(cap_args[0], "shape") else None
+
     # --- 리포트 ---------------------------------------------------------------
     print("-" * 72)
     if n_params is not None:
         print(f"  params         : {n_params/1e6:.2f} M")
+    if gflops is not None:
+        shape_s = f", input={in_shape}" if in_shape else ""
+        print(f"  GFLOPs         : {gflops:.2f}  (MAC×2, via {backend}{shape_s})")
+    elif backend is not None:
+        print(f"  GFLOPs         : 측정 불가 ({backend})")
     print(summarize("end-to-end", e2e_ms))
     if timer is not None and timer.times_ms:
         fwd = timer.times_ms[-len(e2e_ms):]  # 측정 구간만

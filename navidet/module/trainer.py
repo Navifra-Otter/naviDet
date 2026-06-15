@@ -127,7 +127,8 @@ class EpochReporter:
             print(f"  saved: {ep_dir}/model.pt" + (f" + val_viz({len(self.viz_idx)})" if self.viz_idx else ""))
 
         # best (pose 종합점수, 없으면 train total)
-        if score < self.best:
+        # 유효 step 0 epoch(total=inf/nan)이나 비정상 0 score를 best로 잡지 않도록 가드.
+        if math.isfinite(score) and score > 0 and score < self.best:
             prev = self.best
             self.best = score
             torch.save(make_ckpt(), os.path.join(self.out, "best.pt"))

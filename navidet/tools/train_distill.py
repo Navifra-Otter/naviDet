@@ -155,7 +155,7 @@ def train_one_epoch(step_module, loader, optimizer, device, epoch, total_epochs,
     keys = LOSS_KEYS.get(task, LOSS_KEYS["pose"])
     agg = {k: 0.0 for k in keys}
     agg["distill"] = 0.0
-    n = 0
+    n = n_skip = 0
     prog = Progress(epoch, total_epochs, len(loader), prefix=f"α={alpha:.2f} ")
     for it, (imgs, targets) in enumerate(loader):
         imgs = imgs.to(device, non_blocking=True)
@@ -166,6 +166,7 @@ def train_one_epoch(step_module, loader, optimizer, device, epoch, total_epochs,
 
         optimizer.zero_grad(set_to_none=True)
         if not torch.isfinite(total):
+            n_skip += 1
             continue
         if scaler is not None:
             scaler.scale(total).backward()
@@ -184,8 +185,16 @@ def train_one_epoch(step_module, loader, optimizer, device, epoch, total_epochs,
         n += 1
         prog.step(it, total=agg["total"] / n, distill=agg["distill"] / n)
     prog.close()
+    if n_skip:
+        print(f"  [warn] {n_skip}/{len(loader)} non-finite batch(es) skipped")
 
-    stats = {k: v / max(n, 1) for k, v in agg.items()}
+    if n == 0:
+        # 모든 배치가 비유한 → 유효 step 0. 평균을 0으로 내면 best로 오선정되므로
+        # total=inf 로 표시해 reporter가 절대 best로 잡지 않게 한다.
+        stats = {k: float("nan") for k in agg}
+        stats["total"] = float("inf")
+        return stats, alpha, beta
+    stats = {k: v / n for k, v in agg.items()}
     return stats, alpha, beta
 
 

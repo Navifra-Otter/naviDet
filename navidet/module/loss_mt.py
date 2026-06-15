@@ -136,15 +136,17 @@ class MultiTaskLoss(nn.Module):
             # --- Pose: keypoint L1 + visibility BCE ---
             if self.pose:
                 kpt = torch.cat([k.flatten(2) for k in out["kpt"]], 2).permute(0, 2, 1)  # [B,A,nk*D]
-                kp = kpt[fg_mask].view(-1, self.nk, self.kdim)
-                st = stride_t.view(1, -1, 1).expand(B, -1, 1)[fg_mask]   # [Npos,1]
-                ap = points.unsqueeze(0).expand(B, -1, 2)[fg_mask]       # [Npos,2]
+                # 키포인트는 픽셀 좌표라 제곱오차가 fp16(max 65504)에서 overflow→NaN 될 수
+                # 있다. 좌표·정규화항을 fp32로 계산해 수치 안정성 확보(AMP 무관).
+                kp = kpt[fg_mask].view(-1, self.nk, self.kdim).float()
+                st = stride_t.view(1, -1, 1).expand(B, -1, 1)[fg_mask].float()   # [Npos,1]
+                ap = points.unsqueeze(0).expand(B, -1, 2)[fg_mask].float()       # [Npos,2]
                 pxk = (kp[:, :, 0] * 2.0 + ap[:, 0:1]) * st              # [Npos,nk]
                 pyk = (kp[:, :, 1] * 2.0 + ap[:, 1:2]) * st
-                gk = targets["gt_kpts"].to(device).view(-1, self.nk, self.kdim)[idx_pos]
+                gk = targets["gt_kpts"].to(device).view(-1, self.nk, self.kdim)[idx_pos].float()
                 # 박스 크기로 정규화한 L1 (가시 키포인트만)
-                bw = (tb[:, 2] - tb[:, 0]).clamp(1)[:, None]
-                bh = (tb[:, 3] - tb[:, 1]).clamp(1)[:, None]
+                bw = (tb[:, 2] - tb[:, 0]).clamp(1)[:, None].float()
+                bh = (tb[:, 3] - tb[:, 1]).clamp(1)[:, None].float()
                 vis = (gk[:, :, 2] > 0).float() if self.kdim == 3 else torch.ones_like(pxk)
                 d = (((pxk - gk[:, :, 0]) / bw) ** 2 + ((pyk - gk[:, :, 1]) / bh) ** 2)
                 loss_kpt = ((d * vis).sum(1) / vis.sum(1).clamp(1)).sum() / npos
